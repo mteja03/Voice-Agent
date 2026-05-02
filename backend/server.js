@@ -80,7 +80,11 @@ const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST'],
-  }
+  },
+  // Longer heartbeats help behind Railway / reverse proxies and mobile radios.
+  pingInterval: 25000,
+  pingTimeout: 60000,
+  connectTimeout: 45000,
 });
 
 // ─── Per-socket cancellation tracking ────────────────────────────────────────

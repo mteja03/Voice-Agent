@@ -3,7 +3,14 @@ import { io } from 'socket.io-client';
 // In production (Vercel), set VITE_BACKEND_URL to the Railway backend URL.
 const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 
-export const socket = io(SOCKET_URL);
+export const socket = io(SOCKET_URL, {
+  autoConnect: true,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 8000,
+  timeout: 25000,
+});
 
 // Centralized socket diagnostics for connection lifecycle visibility.
 socket.on('connect', () => {

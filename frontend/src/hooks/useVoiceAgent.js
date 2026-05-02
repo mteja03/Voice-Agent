@@ -27,6 +27,17 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const autoListenEnabledRef = useRef(false);
   const introPendingRef = useRef(false);
   const vadRef = useRef(null);
+  const disconnectWarnTimerRef = useRef(null);
+
+  const stopAudioPlayback = useCallback(() => {
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.stop();
+      sourceNodeRef.current = null;
+    }
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    setStatus('idle');
+  }, []);
 
   useEffect(() => {
     latestSettingsRef.current = settings;
@@ -45,6 +56,10 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     socketRef.current = socket;
 
     const handleConnect = () => {
+      if (disconnectWarnTimerRef.current) {
+        clearTimeout(disconnectWarnTimerRef.current);
+        disconnectWarnTimerRef.current = null;
+      }
       console.log('Connected to Voice Agent Backend');
       setErrorMsg(null);
     };
@@ -53,10 +68,25 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
-      if (reason !== 'io client disconnect') {
-        setErrorMsg('Connection lost. Attempting to reconnect...');
-      }
       setStatus('idle');
+      if (reason === 'io client disconnect') {
+        return;
+      }
+      // transport close / ping timeout often recover in <1s; avoid flashing a scary banner every time.
+      if (disconnectWarnTimerRef.current) {
+        clearTimeout(disconnectWarnTimerRef.current);
+      }
+      const delay = reason === 'io server disconnect' ? 0 : 2800;
+      disconnectWarnTimerRef.current = setTimeout(() => {
+        disconnectWarnTimerRef.current = null;
+        if (!socketRef.current?.connected) {
+          setErrorMsg(
+            reason === 'io server disconnect'
+              ? 'Disconnected from server. Reconnecting…'
+              : 'Connection dropped. Reconnecting… If this persists, check VITE_BACKEND_URL and Railway logs.'
+          );
+        }
+      }, delay);
     };
 
     const handleConnectError = (err) => {
@@ -150,6 +180,10 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     socketRef.current.on('call_summary', handleCallSummary);
 
     return () => {
+      if (disconnectWarnTimerRef.current) {
+        clearTimeout(disconnectWarnTimerRef.current);
+        disconnectWarnTimerRef.current = null;
+      }
       if (!socketRef.current) return;
       socketRef.current.off('connect', handleConnect);
       socketRef.current.off('disconnect', handleDisconnect);
@@ -228,16 +262,6 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setStatus('idle');
     }
   };
-
-  const stopAudioPlayback = useCallback(() => {
-    if (sourceNodeRef.current) {
-      sourceNodeRef.current.stop();
-      sourceNodeRef.current = null;
-    }
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
-    setStatus('idle');
-  }, []);
 
   // Initialize VAD
   const vad = useMicVAD({
