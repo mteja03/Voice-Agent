@@ -20,11 +20,13 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const pendingAutoEndRef = useRef(false);
   const latestSettingsRef = useRef(settings);
   const latestLeadRef = useRef(activeLead);
+  const onCallSummaryRef = useRef(onCallSummary);
   const pendingTurnRef = useRef(false);
   const lastProcessEmitAtRef = useRef(0);
   const assistantBusyRef = useRef(false);
   const autoListenEnabledRef = useRef(false);
   const introPendingRef = useRef(false);
+  const vadRef = useRef(null);
 
   useEffect(() => {
     latestSettingsRef.current = settings;
@@ -34,16 +36,20 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     latestLeadRef.current = activeLead;
   }, [activeLead]);
 
+  useEffect(() => {
+    onCallSummaryRef.current = onCallSummary;
+  }, [onCallSummary]);
+
   // Initialize Socket.IO
   useEffect(() => {
     socketRef.current = socket;
 
-    socketRef.current.on('connect', () => {
+    const handleConnect = () => {
       console.log('Connected to Voice Agent Backend');
       setErrorMsg(null);
-    });
+    };
 
-    socketRef.current.on('disconnect', (reason) => {
+    const handleDisconnect = (reason) => {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
@@ -51,25 +57,25 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         setErrorMsg('Connection lost. Attempting to reconnect...');
       }
       setStatus('idle');
-    });
+    };
 
-    socketRef.current.on('connect_error', (err) => {
+    const handleConnectError = (err) => {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
       setErrorMsg(`Unable to connect to backend: ${err.message}`);
       setStatus('idle');
-    });
+    };
 
-    socketRef.current.on('transcript', ({ transcript }) => {
+    const handleTranscript = ({ transcript }) => {
       setTurns(prev => [...prev, { transcript, aiText: '' }]);
       setStatus('processing');
-    });
+    };
 
-    socketRef.current.on('tts_audio_chunk', async ({ audioBuffer, text }) => {
+    const handleTtsAudioChunk = async ({ audioBuffer, text }) => {
       assistantBusyRef.current = true;
       introPendingRef.current = false;
-      vad.pause();
+      vadRef.current?.pause();
       // Append text to the latest turn; if there is no user turn yet,
       // create an assistant-led intro turn so opening greeting is visible.
       setTurns(prev => {
@@ -88,9 +94,9 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         audioQueueRef.current.push(audioBuffer);
       }
       playNextAudio();
-    });
+    };
 
-    socketRef.current.on('response_complete', ({ shouldEndCall }) => {
+    const handleResponseComplete = ({ shouldEndCall }) => {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
@@ -101,41 +107,62 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         suppressBargeInUntilRef.current = Math.max(suppressBargeInUntilRef.current, closingPlaybackUntilRef.current);
         pendingAutoEndRef.current = true;
       }
-    });
+    };
 
-    socketRef.current.on('no_speech', () => {
+    const handleNoSpeech = () => {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
       setStatus('idle');
-    });
+    };
 
-    socketRef.current.on('error', ({ message }) => {
+    const handleSocketError = ({ message }) => {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
       setErrorMsg(message);
       setStatus('idle');
-    });
+    };
 
-    socketRef.current.on('session_cleared', () => {
+    const handleSessionCleared = () => {
       setTurns([]);
       stopAudioPlayback();
       setStatus('idle');
-    });
+    };
 
-    socketRef.current.on('call_summary', ({ summary }) => {
+    const handleCallSummary = ({ summary }) => {
       setCallNotice('Call ended and summary saved.');
       setTimeout(() => setCallNotice(''), 4000);
-      if (typeof onCallSummary === 'function') {
-        onCallSummary(summary);
+      if (typeof onCallSummaryRef.current === 'function') {
+        onCallSummaryRef.current(summary);
       }
-    });
+    };
+
+    socketRef.current.on('connect', handleConnect);
+    socketRef.current.on('disconnect', handleDisconnect);
+    socketRef.current.on('connect_error', handleConnectError);
+    socketRef.current.on('transcript', handleTranscript);
+    socketRef.current.on('tts_audio_chunk', handleTtsAudioChunk);
+    socketRef.current.on('response_complete', handleResponseComplete);
+    socketRef.current.on('no_speech', handleNoSpeech);
+    socketRef.current.on('error', handleSocketError);
+    socketRef.current.on('session_cleared', handleSessionCleared);
+    socketRef.current.on('call_summary', handleCallSummary);
 
     return () => {
-      socketRef.current.disconnect();
+      if (!socketRef.current) return;
+      socketRef.current.off('connect', handleConnect);
+      socketRef.current.off('disconnect', handleDisconnect);
+      socketRef.current.off('connect_error', handleConnectError);
+      socketRef.current.off('transcript', handleTranscript);
+      socketRef.current.off('tts_audio_chunk', handleTtsAudioChunk);
+      socketRef.current.off('response_complete', handleResponseComplete);
+      socketRef.current.off('no_speech', handleNoSpeech);
+      socketRef.current.off('error', handleSocketError);
+      socketRef.current.off('session_cleared', handleSessionCleared);
+      socketRef.current.off('call_summary', handleCallSummary);
     };
-  }, [onCallSummary]);
+  }, [stopAudioPlayback]);
 
   // Audio Playback Logic using Web Audio API for gapless playback
   const playNextAudio = async () => {
@@ -282,6 +309,10 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       }
     },
   });
+
+  useEffect(() => {
+    vadRef.current = vad;
+  }, [vad]);
 
   const clearSession = useCallback(() => {
     if (socketRef.current) {
