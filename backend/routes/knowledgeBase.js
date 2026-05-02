@@ -8,6 +8,7 @@ const {
   getCompanyInfo,
   updateCompanyInfo,
 } = require('../services/knowledgeBase');
+const { safeClientMessage } = require('../utils/sanitize');
 
 const router = express.Router();
 
@@ -51,7 +52,7 @@ router.post('/projects', async (req, res, next) => {
     const project = await createProject(req.body || {});
     res.status(201).json({ project });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: safeClientMessage(err) });
   }
 });
 
@@ -61,9 +62,9 @@ router.put('/projects/:id', async (req, res, next) => {
     res.json({ project });
   } catch (err) {
     if (err.message === 'Project not found') {
-      return res.status(404).json({ error: err.message });
+      return res.status(404).json({ error: safeClientMessage(err) });
     }
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: safeClientMessage(err) });
   }
 });
 

@@ -12,6 +12,7 @@ const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech } = require('./services/ttsService');
 const { saveMessage, logCall } = require('./services/db');
+const { safeClientMessage } = require('./utils/sanitize');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -35,9 +36,43 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'Voice Agent' });
 });
 
+app.get('/api/ready', async (req, res) => {
+  const { checkOpenAIKey } = require('./services/chatService');
+  const probe = String(req.query.probe || '') === '1';
+  const base = {
+    ok: true,
+    service: 'Voice Agent',
+    env: {
+      hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
+      hasSarvamKey: Boolean(process.env.SARVAM_API_KEY),
+      port: Number(process.env.PORT || PORT),
+    },
+  };
+  if (!probe) {
+    res.json(base);
+    return;
+  }
+  try {
+    const openai = await checkOpenAIKey();
+    const probeOk = openai?.ok !== false;
+    res.status(probeOk ? 200 : 503).json({
+      ...base,
+      ok: base.ok && probeOk,
+      openai,
+    });
+  } catch (e) {
+    res.status(503).json({
+      ok: false,
+      service: 'Voice Agent',
+      env: base.env,
+      openai: { ok: false, error: safeClientMessage(e) },
+    });
+  }
+});
+
 app.use((err, req, res, next) => {
   console.error('[Server Error]', err.message);
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  res.status(err.status || 500).json({ error: safeClientMessage(err) || 'Internal server error' });
 });
 
 const server = http.createServer(app);
@@ -330,7 +365,7 @@ io.on('connection', (socket) => {
         return;
       }
       console.error('[Socket] Start Assistant Error:', err.message);
-      socket.emit('error', { message: err.message });
+      socket.emit('error', { message: safeClientMessage(err) });
     } finally {
       if (activeSessions.get(socket.id) === abortCtrl) {
         activeSessions.delete(socket.id);
@@ -438,7 +473,7 @@ io.on('connection', (socket) => {
         return;
       }
       console.error('[Socket] Process Audio Error:', err.message);
-      socket.emit('error', { message: err.message });
+      socket.emit('error', { message: safeClientMessage(err) });
     } finally {
       // Clean up only if this is still the active controller
       if (activeSessions.get(socket.id) === abortCtrl) {

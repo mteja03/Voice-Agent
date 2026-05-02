@@ -3,6 +3,7 @@ const multer = require('multer');
 const { transcribeAudio } = require('../services/sttService');
 const { generateResponse, clearSession } = require('../services/chatService');
 const { synthesizeSpeech } = require('../services/ttsService');
+const { safeClientMessage } = require('../utils/sanitize');
 
 const router = express.Router();
 
@@ -73,7 +74,7 @@ router.post('/conversation', upload.single('audio'), async (req, res) => {
     // Return partial data with fallback so the frontend can still show transcript
     const statusCode = err.response?.status === 401 ? 401 : 500;
     res.status(statusCode).json({
-      error: err.message,
+      error: safeClientMessage(err),
       stage,
       transcript: transcript || '',
       aiText: aiText || FALLBACK_MESSAGE,

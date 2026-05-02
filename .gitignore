@@ -11,3 +11,6 @@ backend/node_modules/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
+
+# Runtime JSON database (local dev)
+backend/data/

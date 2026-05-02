@@ -1,8 +1,46 @@
 const OpenAI = require('openai');
 const { getRelevantProjectInfo, getCompanyInfo } = require('./knowledgeBase');
 const { saveMessage, getRecentMessages, getSessionMessages, clearSessionDb } = require('./db');
+const { safeClientMessage } = require('../utils/sanitize');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key || !String(key).trim()) {
+    throw new Error('OPENAI_API_KEY is not set');
+  }
+  return new OpenAI({ apiKey: key.trim() });
+}
+
+/**
+ * Lightweight auth check for deploy diagnostics (no secrets in response).
+ */
+async function checkOpenAIKey() {
+  if (!process.env.OPENAI_API_KEY || !String(process.env.OPENAI_API_KEY).trim()) {
+    return { ok: false, error: 'OPENAI_API_KEY is not set' };
+  }
+  try {
+    const openai = getOpenAI();
+    await openai.chat.completions.create({
+      model: 'gpt-4o',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    return { ok: true };
+  } catch (e) {
+    const status = e?.status ?? e?.response?.status;
+    const code = e?.code;
+    let error = safeClientMessage(e) || 'OpenAI request failed';
+    if (status === 401) error = 'OpenAI authentication failed (invalid or revoked API key).';
+    else if (status === 403) error = 'OpenAI access forbidden for this key or organization.';
+    else if (status === 429) error = 'OpenAI rate limit or quota exceeded.';
+    return {
+      ok: false,
+      status: status || undefined,
+      code: code || undefined,
+      error,
+    };
+  }
+}
 
 function getBaseSystemPrompt(languageMode = 'telugu', companyInfo = {}, agentName = 'Voice Agent') {
   const languageInstruction = languageMode === 'english'
@@ -87,6 +125,7 @@ If a property in the context is 'Unknown', you must ask for it during the Discov
 }
 
 async function createResponseStream(inputText, sessionId, leadContext, languageMode, agentName) {
+  const openai = getOpenAI();
   await saveMessage(sessionId, 'user', inputText);
   const recentMessages = await getRecentMessages(sessionId, 8);
   const systemPrompt = await buildSystemPrompt(inputText, leadContext, languageMode, agentName);
@@ -113,6 +152,29 @@ async function generateResponseStream(transcript, sessionId, leadContext, langua
   return createResponseStream(transcript, sessionId, leadContext, languageMode, agentName);
 }
 
+async function generateResponse(transcript, sessionId, leadContext = null, languageMode = 'telugu', agentName = 'Voice Agent') {
+  const openai = getOpenAI();
+  await saveMessage(sessionId, 'user', transcript);
+  const recentMessages = await getRecentMessages(sessionId, 8);
+  const systemPrompt = await buildSystemPrompt(transcript, leadContext, languageMode, agentName);
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...recentMessages.map(m => ({ role: m.role, content: m.content })),
+    ],
+    max_tokens: 64,
+    temperature: 0.2,
+  });
+
+  const text = response.choices[0]?.message?.content?.trim() || '';
+  if (text) {
+    await saveMessage(sessionId, 'assistant', text);
+  }
+  return text;
+}
+
 /**
  * Generates an initial assistant-led intro for a new lead.
  */
@@ -134,6 +196,7 @@ async function generateLeadIntroStream(sessionId, leadContext, introTemplate, la
 }
 
 async function generateCallSummary(sessionId, leadContext) {
+  const openai = getOpenAI();
   const messages = await getSessionMessages(sessionId);
   const transcript = messages
     .map((m) => `${m.role === 'assistant' ? 'Agent' : 'Lead'}: ${m.content}`)
@@ -196,4 +259,11 @@ async function clearSession(sessionId) {
   await clearSessionDb(sessionId);
 }
 
-module.exports = { generateResponseStream, generateLeadIntroStream, generateCallSummary, clearSession };
+module.exports = {
+  generateResponse,
+  generateResponseStream,
+  generateLeadIntroStream,
+  generateCallSummary,
+  clearSession,
+  checkOpenAIKey,
+};
