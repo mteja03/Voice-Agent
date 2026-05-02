@@ -15,25 +15,21 @@ const { saveMessage, logCall } = require('./services/db');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const LOCAL_ORIGIN_REGEX = /^http:\/\/localhost:\d+$/;
+const { OPENAI_API_KEY, SARVAM_API_KEY } = process.env;
 const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 8);
 const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 24);
 const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 90);
 const END_CALL_MARKER = '[END_CALL]';
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || LOCAL_ORIGIN_REGEX.test(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error('Not allowed by CORS'));
-  },
-}));
+app.use(cors());
 app.use(express.json());
 app.use('/api', conversationRouter);
 app.use('/api/kb', knowledgeBaseRouter);
 app.use('/api/analytics', analyticsRouter);
+
+app.get('/', (req, res) => {
+  res.send('Server is running');
+});
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'Voice Agent' });
@@ -47,13 +43,7 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: (origin, callback) => {
-      if (!origin || LOCAL_ORIGIN_REGEX.test(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error('Not allowed by CORS'));
-    },
+    origin: '*',
     methods: ['GET', 'POST'],
   }
 });
@@ -491,15 +481,21 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
     // Clean up any active stream on disconnect
     const ctrl = activeSessions.get(socket.id);
     if (ctrl) ctrl.abort();
     activeSessions.delete(socket.id);
-    console.log(`[Socket] Client disconnected: ${socket.id}`);
+    console.log(`[Socket] Client disconnected: ${socket.id}, reason=${reason}`);
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`Voice Agent backend running on http://localhost:${PORT}`);
+  console.log(`[Server] Voice Agent backend listening on port ${PORT}`);
+  if (!OPENAI_API_KEY) {
+    console.warn('[Server] Missing OPENAI_API_KEY');
+  }
+  if (!SARVAM_API_KEY) {
+    console.warn('[Server] Missing SARVAM_API_KEY');
+  }
 });

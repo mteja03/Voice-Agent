@@ -1,0 +1,5 @@
+# Local environment files
+frontend/.env
+frontend/.env.*
+backend/.env
+backend/.env.*

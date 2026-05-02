@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMicVAD } from '@ricky0123/vad-react';
-import { io } from 'socket.io-client';
+import { socket } from '../services/socket';
 
 export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
@@ -36,10 +36,29 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
 
   // Initialize Socket.IO
   useEffect(() => {
-    socketRef.current = io('http://localhost:3001');
+    socketRef.current = socket;
 
     socketRef.current.on('connect', () => {
       console.log('Connected to Voice Agent Backend');
+      setErrorMsg(null);
+    });
+
+    socketRef.current.on('disconnect', (reason) => {
+      pendingTurnRef.current = false;
+      assistantBusyRef.current = false;
+      introPendingRef.current = false;
+      if (reason !== 'io client disconnect') {
+        setErrorMsg('Connection lost. Attempting to reconnect...');
+      }
+      setStatus('idle');
+    });
+
+    socketRef.current.on('connect_error', (err) => {
+      pendingTurnRef.current = false;
+      assistantBusyRef.current = false;
+      introPendingRef.current = false;
+      setErrorMsg(`Unable to connect to backend: ${err.message}`);
+      setStatus('idle');
     });
 
     socketRef.current.on('transcript', ({ transcript }) => {
