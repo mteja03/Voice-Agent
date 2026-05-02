@@ -1,58 +1,65 @@
-const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs/promises');
 
-// Ensure data directory exists
 const dataDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const dbPath = path.join(dataDir, 'voice_agent.db');
+const messagesPath = path.join(dataDir, 'messages.json');
+const callsPath = path.join(dataDir, 'calls.json');
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error opening database:', err.message);
-  } else {
-    console.log('Connected to SQLite database.');
-    db.serialize(() => {
-      db.run(`
-        CREATE TABLE IF NOT EXISTS messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT NOT NULL,
-          role TEXT NOT NULL,
-          content TEXT NOT NULL,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      db.run(`
-        CREATE TABLE IF NOT EXISTS calls (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT NOT NULL,
-          lead_name TEXT,
-          lead_phone TEXT,
-          duration_seconds INTEGER,
-          outcome TEXT,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-    });
+let writeQueue = Promise.resolve();
+
+function queueWrite(task) {
+  writeQueue = writeQueue.then(task, task);
+  return writeQueue;
+}
+
+async function ensureJsonFile(filePath, fallback) {
+  try {
+    await fsp.access(filePath);
+  } catch {
+    await fsp.writeFile(filePath, `${JSON.stringify(fallback, null, 2)}\n`, 'utf8');
   }
-});
+}
+
+async function readJson(filePath, fallback) {
+  try {
+    const raw = await fsp.readFile(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJson(filePath, value) {
+  await fsp.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+const db = null;
+
+ensureJsonFile(messagesPath, []);
+ensureJsonFile(callsPath, []);
+console.log('Connected to file-backed JSON database.');
 
 /**
  * Save a message to the database
  */
 function saveMessage(sessionId, role, content) {
-  return new Promise((resolve, reject) => {
-    db.run(
-      'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
-      [sessionId, role, content],
-      function (err) {
-        if (err) reject(err);
-        else resolve(this.lastID);
-      }
-    );
+  return queueWrite(async () => {
+    const messages = await readJson(messagesPath, []);
+    const row = {
+      id: (messages[messages.length - 1]?.id || 0) + 1,
+      session_id: sessionId,
+      role,
+      content,
+      timestamp: new Date().toISOString(),
+    };
+    messages.push(row);
+    await writeJson(messagesPath, messages);
+    return row.id;
   });
 }
 
@@ -60,15 +67,12 @@ function saveMessage(sessionId, role, content) {
  * Get recent messages for a session (e.g. last 10)
  */
 function getRecentMessages(sessionId, limit = 10) {
-  return new Promise((resolve, reject) => {
-    db.all(
-      'SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?',
-      [sessionId, limit],
-      (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows.reverse());
-      }
-    );
+  return readJson(messagesPath, []).then((messages) => {
+    const rows = messages
+      .filter((m) => m.session_id === sessionId)
+      .slice(-limit)
+      .map((m) => ({ role: m.role, content: m.content }));
+    return rows;
   });
 }
 
@@ -76,28 +80,27 @@ function getRecentMessages(sessionId, limit = 10) {
  * Get full session messages in chronological order
  */
 function getSessionMessages(sessionId) {
-  return new Promise((resolve, reject) => {
-    db.all(
-      'SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC',
-      [sessionId],
-      (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      }
-    );
-  });
+  return readJson(messagesPath, []).then((messages) =>
+    messages
+      .filter((m) => m.session_id === sessionId)
+      .map((m) => ({ role: m.role, content: m.content }))
+  );
 }
 
 /**
  * Clear a session
  */
 function clearSessionDb(sessionId) {
-  return new Promise((resolve, reject) => {
-    db.serialize(() => {
-      db.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-      db.run('DELETE FROM calls WHERE session_id = ?', [sessionId]);
-      resolve(true);
-    });
+  return queueWrite(async () => {
+    const [messages, calls] = await Promise.all([
+      readJson(messagesPath, []),
+      readJson(callsPath, []),
+    ]);
+    await Promise.all([
+      writeJson(messagesPath, messages.filter((m) => m.session_id !== sessionId)),
+      writeJson(callsPath, calls.filter((c) => c.session_id !== sessionId)),
+    ]);
+    return true;
   });
 }
 
@@ -105,15 +108,20 @@ function clearSessionDb(sessionId) {
  * Log a call
  */
 function logCall(sessionId, leadName, leadPhone, durationSeconds, outcome) {
-  return new Promise((resolve, reject) => {
-    db.run(
-      'INSERT INTO calls (session_id, lead_name, lead_phone, duration_seconds, outcome) VALUES (?, ?, ?, ?, ?)',
-      [sessionId, leadName || null, leadPhone || null, durationSeconds || 0, outcome || 'unknown'],
-      function (err) {
-        if (err) reject(err);
-        else resolve(this.lastID);
-      }
-    );
+  return queueWrite(async () => {
+    const calls = await readJson(callsPath, []);
+    const row = {
+      id: (calls[calls.length - 1]?.id || 0) + 1,
+      session_id: sessionId,
+      lead_name: leadName || null,
+      lead_phone: leadPhone || null,
+      duration_seconds: durationSeconds || 0,
+      outcome: outcome || 'unknown',
+      timestamp: new Date().toISOString(),
+    };
+    calls.push(row);
+    await writeJson(callsPath, calls);
+    return row.id;
   });
 }
 
@@ -121,59 +129,37 @@ function logCall(sessionId, leadName, leadPhone, durationSeconds, outcome) {
  * Get call analytics
  */
 function getAnalytics() {
-  return new Promise((resolve, reject) => {
-    db.serialize(() => {
-      const analytics = {
-        totalCalls: 0,
-        interestedCalls: 0,
-        callsByDate: [],
-        outcomes: []
-      };
+  return readJson(callsPath, []).then((calls) => {
+    const analytics = {
+      totalCalls: calls.length,
+      interestedCalls: calls.filter((c) => c.outcome === 'interested').length,
+      callsByDate: [],
+      outcomes: [],
+    };
 
-      let pending = 3;
-      const checkDone = () => {
-        pending--;
-        if (pending === 0) resolve(analytics);
-      };
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
+    const byDateMap = new Map();
+    for (const call of calls) {
+      const ts = new Date(call.timestamp);
+      if (Number.isNaN(ts.getTime())) continue;
+      if (ts >= since) {
+        const dateKey = ts.toISOString().slice(0, 10);
+        byDateMap.set(dateKey, (byDateMap.get(dateKey) || 0) + 1);
+      }
+    }
+    analytics.callsByDate = [...byDateMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, count]) => ({ date, count }));
 
-      // 1. Total and Interested counts
-      db.get('SELECT COUNT(*) as total, SUM(CASE WHEN outcome = "interested" THEN 1 ELSE 0 END) as interested FROM calls', (err, row) => {
-        if (!err && row) {
-          analytics.totalCalls = row.total || 0;
-          analytics.interestedCalls = row.interested || 0;
-        }
-        checkDone();
-      });
+    const outcomeMap = new Map();
+    for (const call of calls) {
+      const key = (call.outcome || 'unknown').replace('_', ' ');
+      outcomeMap.set(key, (outcomeMap.get(key) || 0) + 1);
+    }
+    analytics.outcomes = [...outcomeMap.entries()].map(([name, value]) => ({ name, value }));
 
-      // 2. Calls over the last 7 days
-      db.all(`
-        SELECT date(timestamp, 'localtime') as date, COUNT(*) as count 
-        FROM calls 
-        WHERE timestamp >= date('now', '-7 days') 
-        GROUP BY date 
-        ORDER BY date ASC
-      `, (err, rows) => {
-        if (!err && rows) {
-          analytics.callsByDate = rows;
-        }
-        checkDone();
-      });
-
-      // 3. Outcome distribution
-      db.all(`
-        SELECT outcome as name, COUNT(*) as value 
-        FROM calls 
-        GROUP BY outcome
-      `, (err, rows) => {
-        if (!err && rows) {
-          analytics.outcomes = rows.map(r => ({
-            name: (r.name || 'unknown').replace('_', ' '),
-            value: r.value
-          }));
-        }
-        checkDone();
-      });
-    });
+    return analytics;
   });
 }
 
