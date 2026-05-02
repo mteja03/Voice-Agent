@@ -1,0 +1,44 @@
+{
+  "name": "SB Ventures",
+  "tagline": "Real Estate and Properties | Rajahmundry & Kakinada",
+  "headOffice": "SB Ventures, 69-31-15/1 Narayanapuram, Rajahmundry 533106, Andhra Pradesh, India",
+  "phone": "+91 9985555330",
+  "email": "enquiry@sbventures.in",
+  "website": "https://www.sbventures.in",
+  "socialFacebook": "https://www.facebook.com/sbventuresindia/",
+  "leadership": [
+    {
+      "name": "M Ranga Prasad",
+      "role": "CEO"
+    },
+    {
+      "name": "M Bharadwaj",
+      "role": "Managing Director"
+    },
+    {
+      "name": "Bapiraju",
+      "role": "Operation Director"
+    },
+    {
+      "name": "S.V.R. Guptha",
+      "role": "General Manager (Rajahmundry)"
+    },
+    {
+      "name": "M.K.R.P Kameswar Rao",
+      "role": "General Manager (Kakinada)"
+    },
+    {
+      "name": "Srinivas",
+      "role": "Assistant General Manager (Rajahmundry)"
+    }
+  ],
+  "areas": [
+    "Rajahmundry",
+    "Kakinada"
+  ],
+  "projectTypes": [
+    "Apartments",
+    "Residential Plots",
+    "Independent Villas"
+  ]
+}
