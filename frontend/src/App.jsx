@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useVoiceAgent } from './hooks/useVoiceAgent';
 import Sidebar from './components/Sidebar';
@@ -20,9 +20,22 @@ const DEFAULT_SETTINGS = {
   introTemplate: 'హలో {leadName} గారు, నేను {agentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?',
 };
 
+const LS_KEYS = {
+  settings: 'voice-agent-settings',
+  leads: 'voice-agent-leads',
+  activeLeadId: 'voice-agent-active-lead-id',
+};
+
+const LEGACY_LS_KEYS = {
+  settings: 'sb-voice-settings',
+  leads: 'sb-leads',
+  activeLeadId: 'sb-active-lead-id',
+};
+
 function loadSettings() {
   try {
-    const saved = localStorage.getItem('sb-voice-settings');
+    const saved = localStorage.getItem(LS_KEYS.settings)
+      || localStorage.getItem(LEGACY_LS_KEYS.settings);
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed.sttModel === 'saarika:v2.5') parsed.sttModel = 'saaras:v3';
@@ -43,7 +56,8 @@ function loadSettings() {
 
 function loadLeads() {
   try {
-    const saved = localStorage.getItem('sb-leads');
+    const saved = localStorage.getItem(LS_KEYS.leads)
+      || localStorage.getItem(LEGACY_LS_KEYS.leads);
     if (!saved) return [];
     const parsed = JSON.parse(saved);
     return normalizeLeadIds(parsed);
@@ -54,7 +68,8 @@ function loadLeads() {
 
 function loadActiveLeadId() {
   try {
-    return localStorage.getItem('sb-active-lead-id');
+    return localStorage.getItem(LS_KEYS.activeLeadId)
+      || localStorage.getItem(LEGACY_LS_KEYS.activeLeadId);
   } catch {
     return null;
   }
@@ -82,6 +97,26 @@ export default function App() {
   const [leads, setLeads] = useState(loadLeads);
   const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
   const [summaryNote, setSummaryNote] = useState('');
+
+  useEffect(() => {
+    // One-time migration from legacy sb-* keys.
+    try {
+      if (!localStorage.getItem(LS_KEYS.settings)) {
+        const legacySettings = localStorage.getItem(LEGACY_LS_KEYS.settings);
+        if (legacySettings) localStorage.setItem(LS_KEYS.settings, legacySettings);
+      }
+      if (!localStorage.getItem(LS_KEYS.leads)) {
+        const legacyLeads = localStorage.getItem(LEGACY_LS_KEYS.leads);
+        if (legacyLeads) localStorage.setItem(LS_KEYS.leads, legacyLeads);
+      }
+      if (!localStorage.getItem(LS_KEYS.activeLeadId)) {
+        const legacyActiveLeadId = localStorage.getItem(LEGACY_LS_KEYS.activeLeadId);
+        if (legacyActiveLeadId) localStorage.setItem(LS_KEYS.activeLeadId, legacyActiveLeadId);
+      }
+    } catch {
+      // Ignore storage errors (private mode, blocked storage, etc.)
+    }
+  }, []);
   
   const activeLead = leads.find((lead) => lead.id === activeLeadId) || null;
 
@@ -94,22 +129,22 @@ export default function App() {
 
   const handleSettingsChange = useCallback((next) => {
     setSettings(next);
-    localStorage.setItem('sb-voice-settings', JSON.stringify(next));
+    localStorage.setItem(LS_KEYS.settings, JSON.stringify(next));
   }, []);
 
   const handleLeadsChange = useCallback((nextLeads) => {
     const normalized = normalizeLeadIds(nextLeads);
     setLeads(normalized);
-    localStorage.setItem('sb-leads', JSON.stringify(normalized));
+    localStorage.setItem(LS_KEYS.leads, JSON.stringify(normalized));
   }, []);
 
   const handleActiveLeadChange = useCallback((nextLead) => {
     const nextId = nextLead?.id || null;
     setActiveLeadId(nextId);
     if (nextId) {
-      localStorage.setItem('sb-active-lead-id', nextId);
+      localStorage.setItem(LS_KEYS.activeLeadId, nextId);
     } else {
-      localStorage.removeItem('sb-active-lead-id');
+      localStorage.removeItem(LS_KEYS.activeLeadId);
     }
   }, []);
 

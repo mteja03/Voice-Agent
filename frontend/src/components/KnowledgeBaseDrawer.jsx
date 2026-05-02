@@ -151,7 +151,7 @@ export default function KnowledgeBaseDrawer({ isOpen, onClose }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'sb-knowledge-base.json';
+    a.download = 'voice-agent-knowledge-base.json';
     a.click();
     URL.revokeObjectURL(url);
     pushToast('Knowledge base exported', 'success');
