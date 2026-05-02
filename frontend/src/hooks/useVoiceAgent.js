@@ -252,20 +252,6 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       ort.env.wasm.numThreads = 1;
     },
     onSpeechStart: () => {
-      // Only allow barge-in while assistant audio is actually playing.
-      // This avoids cancelling intro generation from ambient/noise before first playback.
-      const now = Date.now();
-      const isBargeInSuppressed = now < suppressBargeInUntilRef.current;
-      const isClosingPlaybackProtected = now < closingPlaybackUntilRef.current;
-      const isAssistantSpeaking = isPlayingRef.current;
-      if (!isBargeInSuppressed && !isClosingPlaybackProtected && isAssistantSpeaking) {
-        stopAudioPlayback();
-      }
-      if (!isBargeInSuppressed && !isClosingPlaybackProtected && isAssistantSpeaking && socketRef.current?.connected) {
-        // Allow immediate next user turn after intentional interruption.
-        pendingTurnRef.current = false;
-        socketRef.current.emit('barge_in');
-      }
       setStatus('listening');
     },
     onSpeechEnd: (audioData) => {
