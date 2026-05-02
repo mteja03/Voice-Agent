@@ -1,7 +1,7 @@
 {
-  "name": "sb-ventures-voice-agent-backend",
+  "name": "voice-agent-backend",
   "version": "1.0.0",
-  "description": "Telugu Voice AI Sales Agent backend for SB Ventures",
+  "description": "Voice Agent backend service",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
