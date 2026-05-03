@@ -53,9 +53,11 @@ const { logger } = require('./utils/logger');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const { OPENAI_API_KEY, SARVAM_API_KEY } = process.env;
-const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 60);
-const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 100);
-const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 200);
+// Defaults match .env.example so local (with example) and Railway (no overrides) behave the same.
+const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 8);
+const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 24);
+const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 90);
+const TTS_FLUSH_SUBSTANTIAL_MIN_CHARS = Number(process.env.TTS_FLUSH_SUBSTANTIAL_MIN_CHARS || 32);
 const END_CALL_MARKER = '[END_CALL]';
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
   .split(',')
@@ -268,6 +270,43 @@ function normalizeTtsText(text = '') {
     .trim();
 }
 
+/** Remove streaming/encoding artifacts so we do not feed TTS broken UTF-8 tails. */
+function stripTtsFlushArtifacts(text = '') {
+  let s = String(text).replace(/\uFFFD+/g, '').trimEnd();
+  if (!s) return s;
+  const lastCode = s.charCodeAt(s.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    s = s.slice(0, -1).trimEnd();
+  }
+  return s;
+}
+
+/**
+ * If the model stopped mid-word, the last token is often a 1–3 char Telugu fragment; drop it so we do not speak gibberish.
+ */
+function trimLikelyClippedTeluguTail(s) {
+  const t = String(s).trimEnd();
+  if (t.length < 6) return t;
+  const re = /([\s\u200c\u200d]+)([^\s\u200c\u200d]+)$/u;
+  const m = t.match(re);
+  if (!m) return t;
+  const lastWord = m[2];
+  const teluguOnly = /^[\u0C00-\u0C7F]+$/u.test(lastWord);
+  if (teluguOnly && lastWord.length <= 3 && !/[.!?।,;:…\u0964\u0965]$/u.test(lastWord)) {
+    return t.slice(0, t.length - lastWord.length).trimEnd();
+  }
+  return t;
+}
+
+function shouldFlushTtsRemainder(sentence) {
+  if (!sentence || sentence.length < 3) return false;
+  // Clause/sentence end (Telugu often uses ASCII . ? ! or danda; commas are common before flush).
+  if (/[.!?।,;:…\u0964\u0965]$/u.test(sentence)) return true;
+  // Stream ended without punctuation but we already have enough to speak (better than dropping the whole tail).
+  if (sentence.length >= TTS_FLUSH_SUBSTANTIAL_MIN_CHARS) return true;
+  return false;
+}
+
 function isLowSignalTranscript(text = '') {
   const cleaned = String(text).trim();
   if (!cleaned) return true;
@@ -393,10 +432,9 @@ io.on('connection', (socket) => {
 
     if (!signal.aborted && sentenceBuffer.trim().length > 3) {
       try {
-        const sentence = normalizeTtsText(sentenceBuffer);
-        const endsCleanly = /[.!?।]$/.test(sentence);
-        // Avoid speaking clipped tail fragments like "ప్లాట్, అప" when stream ends mid-thought.
-        if (sentence && sentence.length >= 3 && endsCleanly) {
+        let sentence = stripTtsFlushArtifacts(normalizeTtsText(sentenceBuffer));
+        sentence = trimLikelyClippedTeluguTail(sentence);
+        if (shouldFlushTtsRemainder(sentence)) {
           console.log(`[TTS Flush] Synthesising remainder: "${sentence}"`);
           const ttsStart = nowMs();
           const audioBase64 = await synthesizeSpeech(
@@ -413,11 +451,14 @@ io.on('connection', (socket) => {
             });
           }
         } else if (sentence) {
-          console.log(`[TTS Flush] Dropping incomplete tail: "${sentence}"`);
+          console.log(`[TTS Flush] Dropping short incomplete tail (${sentence.length} chars): "${sentence}"`);
         }
       } catch (ttsErr) {
         console.error('[TTS Flush Error]', ttsErr.message);
-        socket.emit('tts_audio_chunk', { audioBuffer: null, text: normalizeTtsText(sentenceBuffer) });
+        socket.emit('tts_audio_chunk', {
+          audioBuffer: null,
+          text: trimLikelyClippedTeluguTail(stripTtsFlushArtifacts(normalizeTtsText(sentenceBuffer))),
+        });
       }
     }
 
