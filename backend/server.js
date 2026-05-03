@@ -39,6 +39,16 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
   .map((v) => v.trim())
   .filter(Boolean);
 
+function resolveTrustProxy(value) {
+  if (value == null || value === '') return process.env.NODE_ENV === 'production' ? 1 : false;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  const asNumber = Number(value);
+  return Number.isFinite(asNumber) ? asNumber : value;
+}
+
+app.set('trust proxy', resolveTrustProxy(process.env.TRUST_PROXY));
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50,
