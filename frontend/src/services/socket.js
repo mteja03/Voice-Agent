@@ -43,6 +43,8 @@ socket.on('connect_error', (err) => {
   console.error(`[Socket] Connect error: ${err.message}`);
   if (getAuthToken() && isSocketAuthFailure(err.message)) {
     notifyAuthInvalid();
+    socket.io.opts.reconnection = false;
+    socket.disconnect();
   }
 });
 
@@ -57,6 +59,8 @@ socket.io.on('reconnect', (attempt) => {
 socket.io.on('reconnect_error', (err) => {
   console.error(`[Socket] Reconnect error: ${err.message}`);
   if (getAuthToken() && isSocketAuthFailure(err.message)) {
+    socket.io.opts.reconnection = false;
+    socket.disconnect();
     notifyAuthInvalid();
   }
 });

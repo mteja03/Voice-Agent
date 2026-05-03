@@ -28,7 +28,17 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const autoListenEnabledRef = useRef(false);
   const introPendingRef = useRef(false);
   const vadRef = useRef(null);
+  const playNextAudioRef = useRef(null);
   const disconnectWarnTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+    };
+  }, []);
 
   const stopAudioPlayback = useCallback(() => {
     if (sourceNodeRef.current) {
@@ -124,7 +134,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       if (audioBuffer) {
         audioQueueRef.current.push(audioBuffer);
       }
-      playNextAudio();
+      playNextAudioRef.current?.();
     };
 
     const handleResponseComplete = ({ shouldEndCall }) => {
@@ -245,12 +255,12 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         isPlayingRef.current = false;
         sourceNodeRef.current = null;
         if (audioQueueRef.current.length > 0) {
-          playNextAudio();
+          playNextAudioRef.current?.();
         } else {
           if (!pendingTurnRef.current) assistantBusyRef.current = false;
           setStatus('idle');
           if (autoListenEnabledRef.current) {
-            vad.start();
+            vadRef.current?.start();
           }
           if (pendingAutoEndRef.current) {
             pendingAutoEndRef.current = false;
@@ -273,6 +283,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setStatus('idle');
     }
   };
+  playNextAudioRef.current = playNextAudio;
 
   // Initialize VAD
   const vad = useMicVAD({
@@ -320,12 +331,12 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         socketRef.current.emit('process_audio', {
           audioBuffer: wavBlob,
           sessionId,
-          sttModel: settings.sttModel,
-          ttsModel: settings.ttsModel,
-          ttsVoice: settings.ttsVoice,
-          languageMode: settings.languageMode,
-          agentName: settings.agentName,
-          lead: activeLead || null,
+          sttModel: latestSettingsRef.current.sttModel,
+          ttsModel: latestSettingsRef.current.ttsModel,
+          ttsVoice: latestSettingsRef.current.ttsVoice,
+          languageMode: latestSettingsRef.current.languageMode,
+          agentName: latestSettingsRef.current.agentName,
+          lead: latestLeadRef.current || null,
         });
       }
     },

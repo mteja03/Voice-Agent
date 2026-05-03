@@ -13,7 +13,7 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { apiFetch } from '../services/apiFetch';
+import { apiFetch, BACKEND_URL } from '../services/apiFetch';
 
 const PIE_COLORS = ['#c346ef', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6b7280'];
 
@@ -22,8 +22,7 @@ export default function DashboardHome({ leads }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
-    apiFetch(`${backendUrl}/api/analytics`)
+    apiFetch(`${BACKEND_URL}/api/analytics`)
       .then((data) => {
         setAnalytics(data);
         setLoading(false);

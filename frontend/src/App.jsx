@@ -101,7 +101,6 @@ export default function App() {
   const [settings, setSettings] = useState(loadSettings);
   const [leads, setLeads] = useState(loadLeads);
   const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
-  const [summaryNote, setSummaryNote] = useState('');
   const [tenants, setTenants] = useState([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
   const [tenantActionError, setTenantActionError] = useState('');
@@ -171,12 +170,13 @@ export default function App() {
   const handleActiveLeadChange = useCallback((nextLead) => {
     const nextId = nextLead?.id || null;
     setActiveLeadId(nextId);
+    clearSession();
     if (nextId) {
       localStorage.setItem(LS_KEYS.activeLeadId, nextId);
     } else {
       localStorage.removeItem(LS_KEYS.activeLeadId);
     }
-  }, []);
+  }, [clearSession]);
 
   const handleNextLeadQuick = useCallback(() => {
     if (!activeLead) return;
@@ -276,7 +276,7 @@ export default function App() {
             leads={leads}
             handleNextLeadQuick={handleNextLeadQuick}
             settings={settings}
-            summaryNote={callNotice || summaryNote}
+            summaryNote={callNotice}
           />
         )}
         {activeTab === 'agent-config' && (

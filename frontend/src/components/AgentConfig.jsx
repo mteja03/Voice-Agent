@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Settings, BookOpen, MessageSquare, Save, CheckCircle2, AlertCircle, Plus, Search, Building, FileText } from 'lucide-react';
 import { listProjects, createProject, updateProject, deleteProject, getCompanyInfo, updateCompanyInfo } from '../services/kbApi';
 import KnowledgeBaseProjectForm from './KnowledgeBaseProjectForm';
@@ -28,7 +28,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
     return projects.filter(p => (p.name && p.name.toLowerCase().includes(lower)) || (p.location && p.location.toLowerCase().includes(lower)));
   }, [projects, search]);
 
-  const loadKb = async () => {
+  const loadKb = useCallback(async () => {
     setKbLoading(true);
     try {
       const [{ projects: items }, { companyInfo: info }] = await Promise.all([listProjects(), getCompanyInfo()]);
@@ -40,13 +40,13 @@ export default function AgentConfig({ settings, onSettingsChange }) {
     } finally {
       setKbLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'knowledge-base' && projects.length === 0) {
       loadKb();
     }
-  }, [activeTab]);
+  }, [activeTab, loadKb]);
 
   const pushToast = (message, tone = 'success') => {
     const id = toastIdRef.current++;
