@@ -22,6 +22,13 @@ export function saveAuthSession(token, user) {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
+export function updateAuthUser(patch = {}) {
+  const current = getAuthUser();
+  if (!current) return;
+  const next = { ...current, ...patch };
+  localStorage.setItem(USER_KEY, JSON.stringify(next));
+}
+
 export function clearAuthSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);

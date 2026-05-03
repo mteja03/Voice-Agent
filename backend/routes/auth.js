@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { randomUUID } = require('crypto');
 const validator = require('validator');
 const { getSupabase } = require('../services/supabaseClient');
+const { verifyAccessToken } = require('../utils/authUtils');
 const { logger } = require('../utils/logger');
 const { sendError, sendSuccess } = require('../utils/response');
 const asyncHandler = require('../utils/asyncHandler');
@@ -11,6 +12,26 @@ const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
 const BCRYPT_ROUNDS = 10;
 const JWT_EXPIRES = '7d';
+
+function resolveAccessRole(user = {}) {
+  if (user.platform_role === 'master_admin') return 'master_admin';
+  return user.role === 'admin' ? 'tenant_admin' : 'agent';
+}
+
+function toAuthUser(user = {}, activeCompanyId) {
+  const isMasterAdmin = user.platform_role === 'master_admin';
+  return {
+    id: user.id,
+    email: user.email,
+    companyId: activeCompanyId || user.company_id,
+    role: resolveAccessRole(user),
+    dbRole: user.role,
+    platformRole: user.platform_role || null,
+    isMasterAdmin,
+    activeCompanyId: activeCompanyId || user.company_id,
+    createdAt: user.created_at,
+  };
+}
 
 function signToken(payload) {
   if (!process.env.JWT_SECRET) {
@@ -20,6 +41,16 @@ function signToken(payload) {
     throw err;
   }
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: JWT_EXPIRES });
+}
+
+async function assertCompanyExists(supabase, companyId) {
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id')
+    .eq('id', companyId)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
 }
 
 router.post(
@@ -74,15 +105,19 @@ router.post(
         password_hash: passwordHash,
         company_id: companyId,
         role,
+        platform_role: null,
       })
-      .select('id,email,company_id,role,created_at')
+      .select('id,email,company_id,role,platform_role,created_at')
       .single();
     if (userError) throw userError;
 
+    const authUser = toAuthUser(user, user.company_id);
     const token = signToken({
-      userId: user.id,
-      companyId: user.company_id,
-      role: user.role,
+      userId: authUser.id,
+      companyId: authUser.companyId,
+      role: authUser.role,
+      activeCompanyId: authUser.activeCompanyId,
+      isMasterAdmin: authUser.isMasterAdmin,
     });
 
     log.info('auth_register_success', { email, userId: user.id, companyId: user.company_id });
@@ -91,13 +126,7 @@ router.post(
       res,
       {
         token,
-        user: {
-          id: user.id,
-          email: user.email,
-          companyId: user.company_id,
-          role: user.role,
-          createdAt: user.created_at,
-        },
+        user: authUser,
       },
       {},
       201
@@ -129,7 +158,7 @@ router.post(
     const supabase = getSupabase();
     const { data: user, error } = await supabase
       .from('users')
-      .select('id,email,password_hash,company_id,role,created_at')
+      .select('id,email,password_hash,company_id,role,platform_role,created_at')
       .eq('email', email)
       .maybeSingle();
     if (error) throw error;
@@ -156,24 +185,75 @@ router.post(
       return sendError(res, 401, 'Invalid credentials');
     }
 
+    const requestedActiveCompanyId = String(body.activeCompanyId || '').trim();
+    let activeCompanyId = user.company_id;
+    const isMasterAdmin = user.platform_role === 'master_admin';
+    if (isMasterAdmin && requestedActiveCompanyId) {
+      const exists = await assertCompanyExists(supabase, requestedActiveCompanyId);
+      if (!exists) {
+        return sendError(res, 404, 'Selected organization not found');
+      }
+      activeCompanyId = requestedActiveCompanyId;
+    }
+
+    const authUser = toAuthUser(user, activeCompanyId);
     const token = signToken({
-      userId: user.id,
-      companyId: user.company_id,
-      role: user.role,
+      userId: authUser.id,
+      companyId: authUser.companyId,
+      role: authUser.role,
+      activeCompanyId: authUser.activeCompanyId,
+      isMasterAdmin: authUser.isMasterAdmin,
     });
 
-    log.info('auth_login_success', { email, userId: user.id, companyId: user.company_id });
+    log.info('auth_login_success', { email, userId: user.id, companyId: authUser.companyId });
 
     return sendSuccess(res, {
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        companyId: user.company_id,
-        role: user.role,
-        createdAt: user.created_at,
-      },
+      user: authUser,
     });
+  })
+);
+
+router.post(
+  '/switch-tenant',
+  asyncHandler(async (req, res) => {
+    const log = logger.forReq(req);
+    const token = String(req.headers.authorization || '').startsWith('Bearer ')
+      ? String(req.headers.authorization || '').slice(7).trim()
+      : '';
+    const verified = verifyAccessToken(process.env.JWT_SECRET, token);
+    if (!verified.ok) return sendError(res, 401, 'Authentication required');
+
+    const activeCompanyId = String(req.body?.activeCompanyId || '').trim();
+    if (!activeCompanyId) return sendError(res, 400, 'activeCompanyId is required');
+
+    const supabase = getSupabase();
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id,email,company_id,role,platform_role,created_at')
+      .eq('id', verified.payload.userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!user) return sendError(res, 401, 'Session is no longer valid');
+    if (user.platform_role !== 'master_admin') return sendError(res, 403, 'Only master admin can switch organization');
+
+    const exists = await assertCompanyExists(supabase, activeCompanyId);
+    if (!exists) return sendError(res, 404, 'Selected organization not found');
+
+    const authUser = toAuthUser(user, activeCompanyId);
+    const nextToken = signToken({
+      userId: authUser.id,
+      companyId: authUser.companyId,
+      role: authUser.role,
+      activeCompanyId: authUser.activeCompanyId,
+      isMasterAdmin: authUser.isMasterAdmin,
+    });
+    log.info('auth_switch_tenant_success', {
+      userId: authUser.id,
+      email: authUser.email,
+      activeCompanyId: authUser.activeCompanyId,
+    });
+    return sendSuccess(res, { token: nextToken, user: authUser });
   })
 );
 

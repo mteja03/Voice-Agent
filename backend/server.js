@@ -10,6 +10,7 @@ const authRouter = require('./routes/auth');
 const conversationRouter = require('./routes/conversation');
 const knowledgeBaseRouter = require('./routes/knowledgeBase');
 const analyticsRouter = require('./routes/analytics');
+const tenantsRouter = require('./routes/tenants');
 const { authMiddleware } = require('./middleware/auth');
 const { requireCompanyId } = require('./middleware/tenant');
 const { requestIdMiddleware } = require('./middleware/requestContext');
@@ -68,6 +69,7 @@ app.use(cors({
 app.use(express.json());
 app.use(requestIdMiddleware);
 app.use('/api/auth', authLimiter, authRouter);
+app.use('/api/tenants', authMiddleware, verifyUserContext, tenantsRouter);
 app.use('/api', authMiddleware, verifyUserContext, requireCompanyId, conversationRouter);
 app.use('/api/kb', authMiddleware, verifyUserContext, requireCompanyId, knowledgeBaseRouter);
 app.use('/api/analytics', authMiddleware, verifyUserContext, requireCompanyId, analyticsRouter);

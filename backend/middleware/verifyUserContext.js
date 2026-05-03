@@ -10,19 +10,28 @@ async function loadVerifiedUserContext(payload) {
   const supabase = getSupabase();
   const { data: user, error } = await supabase
     .from('users')
-    .select('id, company_id, role')
+    .select('id, company_id, role, platform_role')
     .eq('id', payload.userId)
     .maybeSingle();
   if (error || !user) {
     return { ok: false, code: 'user_missing' };
   }
-  if (user.company_id !== payload.companyId) {
+
+  const isMasterAdmin = user.platform_role === 'master_admin' || Boolean(payload.isMasterAdmin);
+  const requestedCompanyId = payload.activeCompanyId || payload.companyId;
+  const resolvedCompanyId = isMasterAdmin ? requestedCompanyId : user.company_id;
+  if (!resolvedCompanyId) {
+    return { ok: false, code: 'tenant_missing' };
+  }
+
+  if (!isMasterAdmin && user.company_id !== payload.companyId) {
     return { ok: false, code: 'token_mismatch' };
   }
+
   const { data: company, error: companyErr } = await supabase
     .from('companies')
     .select('id')
-    .eq('id', user.company_id)
+    .eq('id', resolvedCompanyId)
     .maybeSingle();
   if (companyErr || !company) {
     return { ok: false, code: 'company_missing' };
@@ -31,8 +40,12 @@ async function loadVerifiedUserContext(payload) {
     ok: true,
     user: {
       userId: user.id,
-      companyId: user.company_id,
-      role: user.role,
+      companyId: resolvedCompanyId,
+      role: isMasterAdmin ? 'master_admin' : (user.role === 'admin' ? 'tenant_admin' : 'agent'),
+      dbRole: user.role,
+      isMasterAdmin,
+      platformRole: user.platform_role || null,
+      activeCompanyId: resolvedCompanyId,
     },
   };
 }

@@ -1,9 +1,11 @@
 function getTenantContext(req) {
-  if (!req.user?.companyId) return null;
+  const companyId = req.user?.activeCompanyId || req.user?.companyId;
+  if (!companyId) return null;
   return {
     userId: req.user.userId,
-    companyId: req.user.companyId,
+    companyId,
     role: req.user.role,
+    isMasterAdmin: Boolean(req.user.isMasterAdmin),
   };
 }
 

@@ -56,8 +56,34 @@ create table if not exists users (
   password_hash text not null,
   company_id uuid not null references companies(id) on delete cascade,
   role text not null default 'agent' check (role in ('admin','agent')),
+  platform_role text check (platform_role in ('master_admin')),
+  is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+alter table users add column if not exists platform_role text;
+alter table users add column if not exists is_active boolean not null default true;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'users_platform_role_check'
+  ) then
+    alter table users drop constraint users_platform_role_check;
+  end if;
+exception
+  when undefined_table then null;
+end $$;
+
+alter table users
+  add constraint users_platform_role_check
+  check (platform_role is null or platform_role in ('master_admin'));
+
+update users
+set platform_role = 'master_admin'
+where email = 'mteja0852@gmail.com';
 
 create table if not exists projects (
   id uuid primary key default gen_random_uuid(),

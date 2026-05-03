@@ -6,7 +6,8 @@ import DashboardHome from './components/DashboardHome';
 import Campaigns from './components/Campaigns';
 import Dialer from './components/Dialer';
 import AgentConfig from './components/AgentConfig';
-import { login, register, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
+import { login, register, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
+import { listTenants, createTenant } from './services/tenants';
 
 const SESSION_ID = uuidv4();
 
@@ -101,6 +102,10 @@ export default function App() {
   const [leads, setLeads] = useState(loadLeads);
   const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
   const [summaryNote, setSummaryNote] = useState('');
+  const [tenants, setTenants] = useState([]);
+  const [tenantsLoading, setTenantsLoading] = useState(false);
+  const [tenantActionError, setTenantActionError] = useState('');
+  const [newTenantName, setNewTenantName] = useState('');
 
   useEffect(() => {
     const onSessionInvalid = () => {
@@ -134,6 +139,19 @@ export default function App() {
 
   const { status, turns, errorMsg, closeDetected, callNotice, clearSession, vadLoading, vadError, isVadListening, startVad, pauseVad, endCall, retryIntro } =
     useVoiceAgent(SESSION_ID, settings, activeLead);
+
+  useEffect(() => {
+    if (!authUser?.isMasterAdmin) {
+      setTenants([]);
+      return;
+    }
+    setTenantsLoading(true);
+    setTenantActionError('');
+    listTenants()
+      .then((rows) => setTenants(rows))
+      .catch((err) => setTenantActionError(err.message || 'Failed to load organizations'))
+      .finally(() => setTenantsLoading(false));
+  }, [authUser?.isMasterAdmin]);
 
   const handleTabChange = useCallback((tabId) => {
     setActiveTab(tabId);
@@ -189,6 +207,37 @@ export default function App() {
     window.location.reload();
   }, []);
 
+  const handleTenantSwitch = useCallback(async (nextCompanyId) => {
+    if (!nextCompanyId || nextCompanyId === authUser?.activeCompanyId) return;
+    try {
+      setTenantActionError('');
+      setTenantsLoading(true);
+      const result = await switchTenant(nextCompanyId);
+      setAuthUser(result.user);
+      window.location.reload();
+    } catch (err) {
+      setTenantActionError(err.message || 'Failed to switch organization');
+    } finally {
+      setTenantsLoading(false);
+    }
+  }, [authUser?.activeCompanyId]);
+
+  const handleCreateTenant = useCallback(async () => {
+    const name = newTenantName.trim();
+    if (!name) return;
+    try {
+      setTenantActionError('');
+      setTenantsLoading(true);
+      const tenant = await createTenant(name);
+      setTenants((prev) => [tenant, ...prev]);
+      setNewTenantName('');
+    } catch (err) {
+      setTenantActionError(err.message || 'Failed to create organization');
+    } finally {
+      setTenantsLoading(false);
+    }
+  }, [newTenantName]);
+
   if (!authUser) {
     return (
       <AuthScreen loading={authLoading} error={authError} onSubmit={handleAuth} />
@@ -237,12 +286,52 @@ export default function App() {
           />
         )}
       </main>
-      <button
-        onClick={handleLogout}
-        className="absolute top-3 right-3 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700"
-      >
-        Logout
-      </button>
+      <div className="absolute top-3 right-3 flex items-center gap-2">
+        {authUser?.isMasterAdmin && (
+          <>
+            <select
+              className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 min-w-[180px]"
+              value={authUser.activeCompanyId || ''}
+              onChange={(e) => handleTenantSwitch(e.target.value)}
+              disabled={tenantsLoading}
+              title="Switch organization"
+            >
+              <option value="" disabled>
+                {tenantsLoading ? 'Loading organizations...' : 'Select organization'}
+              </option>
+              {tenants.map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>
+                  {tenant.name}
+                </option>
+              ))}
+            </select>
+            <input
+              value={newTenantName}
+              onChange={(e) => setNewTenantName(e.target.value)}
+              placeholder="New organization"
+              className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 w-40"
+            />
+            <button
+              onClick={handleCreateTenant}
+              disabled={tenantsLoading || !newTenantName.trim()}
+              className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 disabled:opacity-60"
+            >
+              Create
+            </button>
+          </>
+        )}
+        <button
+          onClick={handleLogout}
+          className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700"
+        >
+          Logout
+        </button>
+      </div>
+      {tenantActionError && (
+        <div className="absolute top-12 right-3 text-xs text-red-300 bg-red-900/20 border border-red-900/40 rounded px-2 py-1">
+          {tenantActionError}
+        </div>
+      )}
 
     </div>
   );

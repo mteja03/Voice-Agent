@@ -16,14 +16,21 @@ function verifyAccessToken(secret, token) {
   try {
     const payload = jwt.verify(String(token).trim(), secret);
     const userId = payload.userId;
-    const companyId = payload.companyId;
+    const companyId = payload.activeCompanyId || payload.companyId;
     const role = payload.role;
+    const isMasterAdmin = Boolean(payload.isMasterAdmin || role === 'master_admin');
     if (!userId || !companyId) {
       return { ok: false, code: 'malformed_payload', message: 'Invalid token' };
     }
     return {
       ok: true,
-      payload: { userId, companyId, role: role || 'agent' },
+      payload: {
+        userId,
+        companyId,
+        role: role || 'agent',
+        isMasterAdmin,
+        activeCompanyId: companyId,
+      },
     };
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
