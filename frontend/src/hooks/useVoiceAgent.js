@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMicVAD } from '@ricky0123/vad-react';
 import { socket } from '../services/socket';
+import { getAuthToken } from '../services/auth';
 
 export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
@@ -146,7 +147,14 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setStatus('idle');
     };
 
-    const handleSocketError = ({ message }) => {
+    const handleSocketError = (payload) => {
+      if (payload?.type === 'AUTH') {
+        return;
+      }
+      const message =
+        typeof payload?.message === 'string'
+          ? payload.message
+          : 'Something went wrong';
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
@@ -178,6 +186,9 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     socketRef.current.on('error', handleSocketError);
     socketRef.current.on('session_cleared', handleSessionCleared);
     socketRef.current.on('call_summary', handleCallSummary);
+    if (getAuthToken()) {
+      socketRef.current.connect();
+    }
 
     return () => {
       if (disconnectWarnTimerRef.current) {

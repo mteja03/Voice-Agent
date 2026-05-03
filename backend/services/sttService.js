@@ -1,5 +1,6 @@
 const axios = require('axios');
 const FormData = require('form-data');
+const { logger } = require('../utils/logger');
 
 const SARVAM_STT_URL = 'https://api.sarvam.ai/speech-to-text';
 
@@ -27,7 +28,7 @@ async function transcribeAudio(
     : mimetype.includes('ogg') ? 'ogg'
     : 'webm';
 
-  console.log(`[STT] Sending audio: ${audioBuffer.length}B, ext=${ext}, model=${model}, lang=${languageCode}`);
+  logger.info('stt_request', { bytes: audioBuffer.length, ext, model, languageCode });
 
   const form = new FormData();
   form.append('file', audioBuffer, {
@@ -60,15 +61,14 @@ async function transcribeAudio(
     });
 
     const transcript = response.data?.transcript || response.data?.text || '';
-    console.log(`[STT] Result (lang=${languageCode}):`, JSON.stringify(response.data));
+    logger.info('stt_result', { languageCode, hasTranscript: Boolean(transcript), detected: response.data?.language_code });
 
     if (!transcript) return '';
     return transcript.trim();
 
   } catch (err) {
     const body = err.response?.data;
-    console.error('[Sarvam STT Error] Status:', err.response?.status);
-    console.error('[Sarvam STT Error] Body:', JSON.stringify(body));
+    logger.error('stt_error', { status: err.response?.status, body });
     throw new Error(
       body?.error?.message ||
       body?.message ||

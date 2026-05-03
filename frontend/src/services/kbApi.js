@@ -1,36 +1,32 @@
-const API_BASE = 'http://localhost:3001/api/kb';
+import { apiFetch } from './apiFetch';
 
-async function request(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
-  return payload;
+const API_BASE = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/kb`;
+
+function kb(path, options = {}) {
+  return apiFetch(`${API_BASE}${path}`, options);
 }
 
 export function listProjects(query = '') {
   const q = query ? `?q=${encodeURIComponent(query)}` : '';
-  return request(`/projects${q}`);
+  return kb(`/projects${q}`);
 }
 
 export function createProject(project) {
-  return request('/projects', { method: 'POST', body: JSON.stringify(project) });
+  return kb('/projects', { method: 'POST', body: JSON.stringify(project) });
 }
 
 export function updateProject(id, project) {
-  return request(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(project) });
+  return kb(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(project) });
 }
 
 export function deleteProject(id) {
-  return request(`/projects/${id}`, { method: 'DELETE' });
+  return kb(`/projects/${id}`, { method: 'DELETE' });
 }
 
 export function getCompanyInfo() {
-  return request('/company-info');
+  return kb('/company-info');
 }
 
 export function updateCompanyInfo(companyInfo) {
-  return request('/company-info', { method: 'PUT', body: JSON.stringify(companyInfo) });
+  return kb('/company-info', { method: 'PUT', body: JSON.stringify(companyInfo) });
 }

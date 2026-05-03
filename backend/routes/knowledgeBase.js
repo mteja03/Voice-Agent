@@ -9,15 +9,19 @@ const {
   updateCompanyInfo,
 } = require('../services/knowledgeBase');
 const { safeClientMessage } = require('../utils/sanitize');
+const asyncHandler = require('../utils/asyncHandler');
+const { sendSuccess, sendError } = require('../utils/response');
 
 const router = express.Router();
 
-router.get('/projects', async (req, res, next) => {
-  try {
-    const projects = await listProjects();
+router.get(
+  '/projects',
+  asyncHandler(async (req, res) => {
+    const projects = await listProjects(req.companyId);
     const query = String(req.query.q || '').trim().toLowerCase();
-    if (!query) return res.json({ projects });
-
+    if (!query) {
+      return sendSuccess(res, { projects });
+    }
     const filtered = projects.filter((p) => {
       const hay = [
         p.id,
@@ -31,69 +35,73 @@ router.get('/projects', async (req, res, next) => {
         .toLowerCase();
       return hay.includes(query);
     });
-    res.json({ projects: filtered });
-  } catch (err) {
-    next(err);
-  }
-});
+    return sendSuccess(res, { projects: filtered });
+  })
+);
 
-router.get('/projects/:id', async (req, res, next) => {
-  try {
-    const project = await getProjectById(req.params.id);
-    if (!project) return res.status(404).json({ error: 'Project not found' });
-    res.json({ project });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.post('/projects', async (req, res, next) => {
-  try {
-    const project = await createProject(req.body || {});
-    res.status(201).json({ project });
-  } catch (err) {
-    res.status(400).json({ error: safeClientMessage(err) });
-  }
-});
-
-router.put('/projects/:id', async (req, res, next) => {
-  try {
-    const project = await updateProject(req.params.id, req.body || {});
-    res.json({ project });
-  } catch (err) {
-    if (err.message === 'Project not found') {
-      return res.status(404).json({ error: safeClientMessage(err) });
+router.get(
+  '/projects/:id',
+  asyncHandler(async (req, res) => {
+    const project = await getProjectById(req.companyId, req.params.id);
+    if (!project) {
+      return sendError(res, 404, 'Project not found');
     }
-    res.status(400).json({ error: safeClientMessage(err) });
-  }
-});
+    return sendSuccess(res, { project });
+  })
+);
 
-router.delete('/projects/:id', async (req, res, next) => {
-  try {
-    const removed = await deleteProject(req.params.id);
-    if (!removed) return res.status(404).json({ error: 'Project not found' });
-    res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
-});
+router.post(
+  '/projects',
+  asyncHandler(async (req, res) => {
+    try {
+      const project = await createProject(req.companyId, req.body || {});
+      return sendSuccess(res, { project }, {}, 201);
+    } catch (err) {
+      return sendError(res, 400, safeClientMessage(err));
+    }
+  })
+);
 
-router.get('/company-info', async (req, res, next) => {
-  try {
-    const companyInfo = await getCompanyInfo();
-    res.json({ companyInfo });
-  } catch (err) {
-    next(err);
-  }
-});
+router.put(
+  '/projects/:id',
+  asyncHandler(async (req, res) => {
+    try {
+      const project = await updateProject(req.companyId, req.params.id, req.body || {});
+      return sendSuccess(res, { project });
+    } catch (err) {
+      if (err.message === 'Project not found') {
+        return sendError(res, 404, safeClientMessage(err));
+      }
+      return sendError(res, 400, safeClientMessage(err));
+    }
+  })
+);
 
-router.put('/company-info', async (req, res, next) => {
-  try {
-    const companyInfo = await updateCompanyInfo(req.body || {});
-    res.json({ companyInfo });
-  } catch (err) {
-    next(err);
-  }
-});
+router.delete(
+  '/projects/:id',
+  asyncHandler(async (req, res) => {
+    const removed = await deleteProject(req.companyId, req.params.id);
+    if (!removed) {
+      return sendError(res, 404, 'Project not found');
+    }
+    return sendSuccess(res, { deleted: true });
+  })
+);
+
+router.get(
+  '/company-info',
+  asyncHandler(async (req, res) => {
+    const companyInfo = await getCompanyInfo(req.companyId);
+    return sendSuccess(res, { companyInfo });
+  })
+);
+
+router.put(
+  '/company-info',
+  asyncHandler(async (req, res) => {
+    const companyInfo = await updateCompanyInfo(req.companyId, req.body || {});
+    return sendSuccess(res, { companyInfo });
+  })
+);
 
 module.exports = router;

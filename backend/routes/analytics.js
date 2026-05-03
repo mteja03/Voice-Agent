@@ -1,16 +1,16 @@
 const express = require('express');
 const { getAnalytics } = require('../services/db');
+const asyncHandler = require('../utils/asyncHandler');
+const { sendSuccess } = require('../utils/response');
 
 const router = express.Router();
 
-router.get('/', async (req, res) => {
-  try {
-    const analytics = await getAnalytics();
-    res.json(analytics);
-  } catch (error) {
-    console.error('Error fetching analytics:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics' });
-  }
-});
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const analytics = await getAnalytics(req.companyId);
+    return sendSuccess(res, analytics);
+  })
+);
 
 module.exports = router;

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { logger } = require('../utils/logger');
 
 const SARVAM_TTS_STREAM_URL = 'https://api.sarvam.ai/text-to-speech/stream';
 
@@ -19,7 +20,7 @@ async function synthesizeSpeech(text, speaker = 'shubh', model = 'bulbul:v3', la
     output_audio_codec: 'mp3',
   };
 
-  console.log('[TTS Stream] Sending payload:', JSON.stringify(payload));
+  logger.info('tts_request', { model, speaker, languageCode, chars: text.length });
 
   try {
     const response = await axios.post(SARVAM_TTS_STREAM_URL, payload, {
@@ -34,7 +35,7 @@ async function synthesizeSpeech(text, speaker = 'shubh', model = 'bulbul:v3', la
     if (!response.data || response.data.byteLength === 0) {
       throw new Error('Sarvam TTS returned no audio data');
     }
-    console.log('[TTS Stream] Received bytes:', response.data.byteLength);
+    logger.info('tts_success', { bytes: response.data.byteLength, model, speaker });
     return Buffer.from(response.data).toString('base64');
 
   } catch (err) {
@@ -47,8 +48,7 @@ async function synthesizeSpeech(text, speaker = 'shubh', model = 'bulbul:v3', la
     } else {
       parsedBody = JSON.stringify(body);
     }
-    console.error('[Sarvam TTS Stream Error] Status:', err.response?.status);
-    console.error('[Sarvam TTS Stream Error] Body:', parsedBody);
+    logger.error('tts_error', { status: err.response?.status, body: parsedBody });
     throw new Error(
       `Sarvam TTS stream failed with status ${err.response?.status || 'unknown'}`
     );

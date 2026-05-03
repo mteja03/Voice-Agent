@@ -6,6 +6,7 @@ import DashboardHome from './components/DashboardHome';
 import Campaigns from './components/Campaigns';
 import Dialer from './components/Dialer';
 import AgentConfig from './components/AgentConfig';
+import { login, register, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 
 const SESSION_ID = uuidv4();
 
@@ -92,11 +93,22 @@ function normalizeLeadIds(leads) {
 }
 
 export default function App() {
+  const [authUser, setAuthUser] = useState(getAuthUser);
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [settings, setSettings] = useState(loadSettings);
   const [leads, setLeads] = useState(loadLeads);
   const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
   const [summaryNote, setSummaryNote] = useState('');
+
+  useEffect(() => {
+    const onSessionInvalid = () => {
+      setAuthUser(null);
+    };
+    window.addEventListener(AUTH_INVALID_EVENT, onSessionInvalid);
+    return () => window.removeEventListener(AUTH_INVALID_EVENT, onSessionInvalid);
+  }, []);
 
   useEffect(() => {
     // One-time migration from legacy sb-* keys.
@@ -155,6 +167,34 @@ export default function App() {
     handleActiveLeadChange(nextLead);
   }, [activeLead, leads, handleActiveLeadChange]);
 
+  const handleAuth = useCallback(async ({ mode, email, password, companyName }) => {
+    try {
+      setAuthError('');
+      setAuthLoading(true);
+      const result = mode === 'register'
+        ? await register(email, password, companyName)
+        : await login(email, password);
+      setAuthUser(result.user);
+      window.location.reload();
+    } catch (err) {
+      setAuthError(err.message || 'Authentication failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    clearAuthSession();
+    setAuthUser(null);
+    window.location.reload();
+  }, []);
+
+  if (!authUser) {
+    return (
+      <AuthScreen loading={authLoading} error={authError} onSubmit={handleAuth} />
+    );
+  }
+
   return (
     <div className="flex h-screen w-full bg-black overflow-hidden font-sans antialiased text-gray-200">
       <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
@@ -197,7 +237,80 @@ export default function App() {
           />
         )}
       </main>
+      <button
+        onClick={handleLogout}
+        className="absolute top-3 right-3 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700"
+      >
+        Logout
+      </button>
 
+    </div>
+  );
+}
+
+function AuthScreen({ onSubmit, loading, error }) {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [companyName, setCompanyName] = useState('Voice Agent Company');
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-200 flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <h1 className="text-2xl font-semibold text-white mb-1">Voice Agent Login</h1>
+        <p className="text-sm text-gray-400 mb-6">
+          {mode === 'register' ? 'Create your tenant account' : 'Sign in to your tenant workspace'}
+        </p>
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit({ mode, email, password, companyName });
+          }}
+        >
+          <input
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+            placeholder="Email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <input
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+            placeholder="Password (min 6 chars)"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            minLength={6}
+            required
+          />
+          {mode === 'register' && (
+            <input
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              placeholder="Company Name"
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              required
+            />
+          )}
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <button
+            disabled={loading}
+            className="w-full bg-brand-500 hover:bg-brand-400 text-black font-medium rounded-lg py-2 disabled:opacity-60"
+            type="submit"
+          >
+            {loading ? 'Please wait...' : mode === 'register' ? 'Register' : 'Login'}
+          </button>
+        </form>
+        <button
+          className="mt-4 text-sm text-gray-400 hover:text-gray-200"
+          onClick={() => setMode((m) => (m === 'login' ? 'register' : 'login'))}
+        >
+          {mode === 'login' ? 'New tenant? Register' : 'Have an account? Login'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,18 +1,31 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const http = require('http');
 const { Server } = require('socket.io');
 
+const authRouter = require('./routes/auth');
 const conversationRouter = require('./routes/conversation');
 const knowledgeBaseRouter = require('./routes/knowledgeBase');
 const analyticsRouter = require('./routes/analytics');
+const { authMiddleware } = require('./middleware/auth');
+const { requireCompanyId } = require('./middleware/tenant');
+const { requestIdMiddleware } = require('./middleware/requestContext');
+const { verifyAccessToken } = require('./utils/authUtils');
+const { sendSuccess, sendError } = require('./utils/response');
+const asyncHandler = require('./utils/asyncHandler');
+const { errorHandler: expressErrorHandler } = require('./utils/errorHandler');
+const { emitSocketError } = require('./utils/socketEmit');
+const { verifyUserContext, loadVerifiedUserContext } = require('./middleware/verifyUserContext');
 const { getCompanyInfo } = require('./services/knowledgeBase');
 const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech } = require('./services/ttsService');
-const { saveMessage, logCall } = require('./services/db');
+const { saveMessage, logCall, getSessionMessages } = require('./services/db');
 const { safeClientMessage } = require('./utils/sanitize');
+const { logger } = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,70 +34,124 @@ const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS |
 const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 24);
 const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 90);
 const END_CALL_MARKER = '[END_CALL]';
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((v) => v.trim())
+  .filter(Boolean);
 
-app.use(cors());
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) =>
+    sendError(res, 429, 'Too many authentication attempts, please try again later'),
+});
+
+app.use(helmet());
+app.use(cors({
+  origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : true,
+  credentials: true,
+}));
 app.use(express.json());
-app.use('/api', conversationRouter);
-app.use('/api/kb', knowledgeBaseRouter);
-app.use('/api/analytics', analyticsRouter);
+app.use(requestIdMiddleware);
+app.use('/api/auth', authLimiter, authRouter);
+app.use('/api', authMiddleware, verifyUserContext, requireCompanyId, conversationRouter);
+app.use('/api/kb', authMiddleware, verifyUserContext, requireCompanyId, knowledgeBaseRouter);
+app.use('/api/analytics', authMiddleware, verifyUserContext, requireCompanyId, analyticsRouter);
 
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'Voice Agent' });
+  sendSuccess(res, { status: 'ok', service: 'Voice Agent' });
 });
 
-app.get('/api/ready', async (req, res) => {
-  const { checkOpenAIKey } = require('./services/chatService');
-  const probe = String(req.query.probe || '') === '1';
-  const base = {
-    ok: true,
-    service: 'Voice Agent',
-    env: {
+app.get(
+  '/api/ready',
+  asyncHandler(async (req, res) => {
+    const { checkOpenAIKey } = require('./services/chatService');
+    const probe = String(req.query.probe || '') === '1';
+    const env = {
       hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
       hasSarvamKey: Boolean(process.env.SARVAM_API_KEY),
+      hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
+      hasSupabaseKey: Boolean(process.env.SUPABASE_KEY),
+      hasJwtSecret: Boolean(process.env.JWT_SECRET),
+      allowedOrigins: ALLOWED_ORIGINS,
       port: Number(process.env.PORT || PORT),
-    },
-  };
-  if (!probe) {
-    res.json(base);
-    return;
-  }
-  try {
-    const openai = await checkOpenAIKey();
-    const probeOk = openai?.ok !== false;
-    res.status(probeOk ? 200 : 503).json({
-      ...base,
-      ok: base.ok && probeOk,
-      openai,
-    });
-  } catch (e) {
-    res.status(503).json({
-      ok: false,
-      service: 'Voice Agent',
-      env: base.env,
-      openai: { ok: false, error: safeClientMessage(e) },
-    });
-  }
-});
+    };
+    if (!probe) {
+      return sendSuccess(res, { ok: true, service: 'Voice Agent', env });
+    }
+    try {
+      const openai = await checkOpenAIKey();
+      const probeOk = openai?.ok !== false;
+      const data = {
+        ok: probeOk,
+        service: 'Voice Agent',
+        env,
+        openai,
+      };
+      return sendSuccess(res, data, {}, probeOk ? 200 : 503);
+    } catch (e) {
+      return sendSuccess(
+        res,
+        {
+          ok: false,
+          service: 'Voice Agent',
+          env,
+          openai: { ok: false, error: safeClientMessage(e) },
+        },
+        {},
+        503
+      );
+    }
+  })
+);
 
-app.use((err, req, res, next) => {
-  console.error('[Server Error]', err.message);
-  res.status(err.status || 500).json({ error: safeClientMessage(err) || 'Internal server error' });
-});
+app.use(expressErrorHandler);
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : true,
     methods: ['GET', 'POST'],
   },
   // Longer heartbeats help behind Railway / reverse proxies and mobile radios.
   pingInterval: 25000,
   pingTimeout: 60000,
   connectTimeout: 45000,
+});
+
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  const result = verifyAccessToken(process.env.JWT_SECRET, token);
+  if (!result.ok) {
+    logger.warn('socket_auth_rejected', {
+      code: result.code,
+      socketId: socket.id,
+    });
+    const msg = result.code === 'token_expired' ? 'Token expired' : 'Unauthorized';
+    return next(new Error(msg));
+  }
+  try {
+    const ctx = await loadVerifiedUserContext(result.payload);
+    if (!ctx.ok) {
+      logger.warn('socket_auth_rejected', { code: ctx.code, socketId: socket.id });
+      const msg =
+        ctx.code === 'company_missing'
+          ? 'Organization is no longer available'
+          : 'Unauthorized';
+      return next(new Error(msg));
+    }
+    socket.user = ctx.user;
+    return next();
+  } catch {
+    logger.warn('socket_auth_rejected', { code: 'verify_failed', socketId: socket.id });
+    return next(new Error('Unauthorized'));
+  }
 });
 
 // ─── Per-socket cancellation tracking ────────────────────────────────────────
@@ -175,10 +242,10 @@ function isLowSignalTranscript(text = '') {
   return false;
 }
 
-async function renderIntroMessage(lead, introTemplate, agentName) {
+async function renderIntroMessage(companyId, lead, introTemplate, agentName) {
   const leadName = lead?.name ? `${lead.name}` : 'కస్టమర్';
   const safeAgentName = agentName || 'Voice Agent';
-  const companyInfo = await getCompanyInfo();
+  const companyInfo = await getCompanyInfo(companyId);
   const safeCompanyName = companyInfo?.name || safeAgentName;
   const template = (introTemplate || '').trim();
   return template
@@ -190,7 +257,17 @@ async function renderIntroMessage(lead, introTemplate, agentName) {
 }
 
 io.on('connection', (socket) => {
-  console.log(`[Socket] Client connected: ${socket.id}`);
+  if (!socket.user?.companyId || !socket.user?.userId) {
+    logger.warn('socket_connection_rejected', { socketId: socket.id, reason: 'missing_user_context' });
+    socket.disconnect(true);
+    return;
+  }
+  const companyId = socket.user.companyId;
+  logger.info('socket_connected', {
+    socketId: socket.id,
+    companyId,
+    userId: socket.user.userId,
+  });
 
   async function emitSingleTtsClip({ text, signal, socket, ttsModel, ttsVoice, languageMode }) {
     const normalizedText = normalizeTtsText(text);
@@ -213,7 +290,7 @@ io.on('connection', (socket) => {
     return { emitted: false, ttsMs };
   }
 
-  async function streamAssistantResponse({ stream, signal, socket, sessionId, ttsModel, ttsVoice, languageMode, timingMeta }) {
+  async function streamAssistantResponse({ stream, signal, socket, companyId, sessionId, ttsModel, ttsVoice, languageMode, timingMeta }) {
     let sentenceBuffer = '';
     let fullAssistantMessage = '';
     let ttsChunks = 0;
@@ -253,6 +330,7 @@ io.on('connection', (socket) => {
           }
         } catch (ttsErr) {
           console.error('[TTS Chunk Error]', ttsErr.message);
+          socket.emit('tts_audio_chunk', { audioBuffer: null, text: sentence });
         }
       }
     }
@@ -283,6 +361,7 @@ io.on('connection', (socket) => {
         }
       } catch (ttsErr) {
         console.error('[TTS Flush Error]', ttsErr.message);
+        socket.emit('tts_audio_chunk', { audioBuffer: null, text: normalizeTtsText(sentenceBuffer) });
       }
     }
 
@@ -290,7 +369,7 @@ io.on('connection', (socket) => {
       const cleanedAssistantMessage = normalizeTtsText(fullAssistantMessage);
       const shouldEndCall =
         fullAssistantMessage.includes(END_CALL_MARKER) || CLOSING_SIGNAL_REGEX.test(cleanedAssistantMessage);
-      await saveMessage(sessionId, 'assistant', cleanedAssistantMessage);
+      await saveMessage(companyId, sessionId, 'assistant', cleanedAssistantMessage);
       socket.emit('response_complete', {
         aiText: cleanedAssistantMessage,
         shouldEndCall,
@@ -308,6 +387,7 @@ io.on('connection', (socket) => {
 
   // ── Feature 2: Barge-in — cancel active processing ───────────────────────
   socket.on('barge_in', () => {
+    if (!socket.user?.companyId) return;
     const ctrl = activeSessions.get(socket.id);
     if (ctrl) {
       console.log(`[Barge-in] Cancelling active stream for ${socket.id}`);
@@ -317,8 +397,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('start_assistant', async (data = {}) => {
+    if (!socket.user?.companyId) return;
     const { sessionId, ttsModel, ttsVoice, lead, introTemplate, languageMode, agentName } = data;
-    if (!sessionId) return;
+    if (!sessionId || !companyId) return;
 
     if (!sessionStartTimes.has(sessionId)) {
       sessionStartTimes.set(sessionId, nowMs());
@@ -332,9 +413,9 @@ io.on('connection', (socket) => {
     const { signal } = abortCtrl;
 
     try {
-      console.log(`[Socket] start_assistant session=${sessionId}`);
+      logger.info('call_started', { companyId, sessionId, leadPhone: lead?.phone || null });
       const requestStartMs = nowMs();
-      const fullAssistantMessage = await renderIntroMessage(lead, introTemplate, agentName);
+      const fullAssistantMessage = await renderIntroMessage(companyId, lead, introTemplate, agentName);
       const llmFirstTokenMs = 0;
 
       if (signal.aborted) return;
@@ -352,7 +433,7 @@ io.on('connection', (socket) => {
         const cleanedAssistantMessage = normalizeTtsText(fullAssistantMessage);
         const shouldEndCall =
           fullAssistantMessage.includes(END_CALL_MARKER) || CLOSING_SIGNAL_REGEX.test(cleanedAssistantMessage);
-        await saveMessage(sessionId, 'assistant', cleanedAssistantMessage);
+        await saveMessage(companyId, sessionId, 'assistant', cleanedAssistantMessage);
         socket.emit('response_complete', {
           aiText: cleanedAssistantMessage,
           shouldEndCall,
@@ -369,7 +450,7 @@ io.on('connection', (socket) => {
         return;
       }
       console.error('[Socket] Start Assistant Error:', err.message);
-      socket.emit('error', { message: safeClientMessage(err) });
+      emitSocketError(socket, 'SYSTEM', safeClientMessage(err));
     } finally {
       if (activeSessions.get(socket.id) === abortCtrl) {
         activeSessions.delete(socket.id);
@@ -378,7 +459,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('process_audio', async (data) => {
+    if (!socket.user?.companyId) return;
     const { audioBuffer, sessionId, sttModel, ttsModel, ttsVoice, lead, languageMode, agentName } = data;
+    if (!companyId || !sessionId) return;
 
     // Cancel any previous in-flight request for this socket (barge-in safety net)
     const existingCtrl = activeSessions.get(socket.id);
@@ -389,7 +472,7 @@ io.on('connection', (socket) => {
     const { signal } = abortCtrl;
 
     try {
-      console.log(`[Socket] process_audio session=${sessionId}`);
+      logger.info('process_audio', { companyId, sessionId, bytes: audioBuffer?.size || audioBuffer?.length || 0 });
       const requestStartMs = nowMs();
       const sttStartMs = nowMs();
 
@@ -413,7 +496,6 @@ io.on('connection', (socket) => {
       // Retry with unknown only when primary transcript is empty.
       // Non-empty primary transcripts (including English words like "Kakinada")
       // are good enough and skipping fallback saves one network round-trip.
-      const hasTeluguChars = /[\u0C00-\u0C7F]/.test(transcript);
       if (transcript.length === 0) {
         console.log('[STT Fallback] Retrying with unknown lang (empty transcript)');
         try {
@@ -432,8 +514,8 @@ io.on('connection', (socket) => {
 
       if (signal.aborted) return;
       if (!transcript || !transcript.trim()) {
-        console.log('[STT] No usable speech detected, skipping turn');
-        socket.emit('no_speech');
+        logger.warn('stt_no_speech', { companyId, sessionId });
+        emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
         return;
       }
       transcript = transcript.trim();
@@ -447,7 +529,7 @@ io.on('connection', (socket) => {
 
       // ── LLM Streaming ──────────────────────────────────────────────────────
       const llmStartMs = nowMs();
-      const stream = await generateResponseStream(transcript, sessionId, lead, languageMode, agentName);
+      const stream = await generateResponseStream(transcript, sessionId, companyId, lead, languageMode, agentName);
       let firstTokenSeen = false;
       const timingMeta = { requestStartMs, sttMs, llmFirstTokenMs: null };
       const instrumentedStream = (async function* wrapStream() {
@@ -464,6 +546,7 @@ io.on('connection', (socket) => {
         stream: instrumentedStream,
         signal,
         socket,
+        companyId,
         sessionId,
         ttsModel,
         ttsVoice,
@@ -477,7 +560,7 @@ io.on('connection', (socket) => {
         return;
       }
       console.error('[Socket] Process Audio Error:', err.message);
-      socket.emit('error', { message: safeClientMessage(err) });
+      emitSocketError(socket, 'SYSTEM', safeClientMessage(err));
     } finally {
       // Clean up only if this is still the active controller
       if (activeSessions.get(socket.id) === abortCtrl) {
@@ -487,14 +570,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('clear_session', async ({ sessionId }) => {
-    await clearSession(sessionId);
+    if (!socket.user?.companyId) return;
+    if (!companyId || !sessionId) return;
+    await clearSession(companyId, sessionId);
     sessionStartTimes.delete(sessionId);
     socket.emit('session_cleared');
   });
 
   socket.on('end_call', async (data = {}) => {
+    if (!socket.user?.companyId) return;
     const { sessionId, lead } = data;
-    if (!sessionId) return;
+    if (!sessionId || !companyId) return;
 
     const callEndMs = nowMs();
 
@@ -505,18 +591,20 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const summary = await generateCallSummary(sessionId, lead);
+      const summary = await generateCallSummary(companyId, sessionId, lead);
       
       const durationMs = sessionStartTimes.has(sessionId) ? callEndMs - sessionStartTimes.get(sessionId) : 0;
       const durationSeconds = Math.round(durationMs / 1000);
       
-      await logCall(sessionId, lead?.name, lead?.phone, durationSeconds, summary.outcome);
+      const transcript = await getSessionMessages(companyId, sessionId);
+      await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
       sessionStartTimes.delete(sessionId);
+      logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
       
       socket.emit('call_summary', { summary });
     } catch (err) {
       console.error('[Socket] End Call Summary Error:', err.message);
-      socket.emit('error', { message: 'Failed to generate call summary' });
+      emitSocketError(socket, 'SYSTEM', 'Failed to generate call summary');
     }
   });
 
@@ -525,7 +613,12 @@ io.on('connection', (socket) => {
     const ctrl = activeSessions.get(socket.id);
     if (ctrl) ctrl.abort();
     activeSessions.delete(socket.id);
-    console.log(`[Socket] Client disconnected: ${socket.id}, reason=${reason}`);
+    logger.info('socket_disconnected', {
+      socketId: socket.id,
+      reason,
+      userId: socket.user?.userId,
+      companyId: socket.user?.companyId,
+    });
   });
 });
 

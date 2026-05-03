@@ -13,6 +13,7 @@ import {
   Cell,
   Legend
 } from 'recharts';
+import { apiFetch } from '../services/apiFetch';
 
 const PIE_COLORS = ['#c346ef', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6b7280'];
 
@@ -21,13 +22,13 @@ export default function DashboardHome({ leads }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/analytics')
-      .then(res => res.json())
-      .then(data => {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+    apiFetch(`${backendUrl}/api/analytics`)
+      .then((data) => {
         setAnalytics(data);
         setLoading(false);
       })
-      .catch(err => {
+      .catch((err) => {
         console.error('Failed to fetch analytics', err);
         setLoading(false);
       });
@@ -38,6 +39,7 @@ export default function DashboardHome({ leads }) {
 
   const totalCalls = analytics?.totalCalls || 0;
   const interestedCalls = analytics?.interestedCalls || 0;
+  const avgDurationSeconds = analytics?.avgDurationSeconds || 0;
   const conversionRate = totalCalls > 0 ? ((interestedCalls / totalCalls) * 100).toFixed(1) : 0;
 
   const callsByDate = analytics?.callsByDate || [];
@@ -81,6 +83,13 @@ export default function DashboardHome({ leads }) {
             icon={TrendingUp} 
             trend="Global average" 
             color="bg-brand-500" 
+          />
+          <StatCard
+            title="Avg Call Duration"
+            value={`${Math.floor(avgDurationSeconds / 60)}m ${avgDurationSeconds % 60}s`}
+            icon={Clock}
+            trend="Across all calls"
+            color="bg-indigo-500"
           />
           <StatCard 
             title="Active Campaign" 

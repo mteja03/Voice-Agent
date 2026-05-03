@@ -1,8 +1,4 @@
-const fs = require('fs/promises');
-const path = require('path');
-
-const PROJECTS_FILE = path.resolve(__dirname, '../data/projects.json');
-const COMPANY_FILE = path.resolve(__dirname, '../data/companyInfo.json');
+const dbService = require('./dbService');
 
 // Telugu + English triggers for property-related queries
 const TRIGGER_KEYWORDS = [
@@ -26,30 +22,6 @@ const TRIGGER_KEYWORDS = [
  * Returns project info string to inject into the GPT prompt
  * when the user's query is property-related.
  */
-let writeQueue = Promise.resolve();
-
-function queueWrite(task) {
-  writeQueue = writeQueue.then(task, task);
-  return writeQueue;
-}
-
-async function readJson(filePath, fallbackValue) {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(raw);
-  } catch (err) {
-    if (err.code === 'ENOENT') return fallbackValue;
-    throw err;
-  }
-}
-
-async function writeJsonAtomic(filePath, payload) {
-  const tempPath = `${filePath}.tmp`;
-  const body = `${JSON.stringify(payload, null, 2)}\n`;
-  await fs.writeFile(tempPath, body, 'utf8');
-  await fs.rename(tempPath, filePath);
-}
-
 function normalizeProject(payload, existing = null) {
   const trimmedName = String(payload.name || existing?.name || '').trim();
   if (!trimmedName) throw new Error('Project name is required');
@@ -82,77 +54,52 @@ function makeProjectId(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `project-${Date.now()}`;
 }
 
-async function listProjects() {
-  return readJson(PROJECTS_FILE, []);
+async function listProjects(companyId) {
+  return dbService.listProjects(companyId);
 }
 
-async function getProjectById(id) {
-  const projects = await listProjects();
-  return projects.find((p) => p.id === id) || null;
+async function getProjectById(companyId, id) {
+  return dbService.getProjectById(companyId, id);
 }
 
-async function createProject(payload) {
-  return queueWrite(async () => {
-    const projects = await listProjects();
-    const project = normalizeProject(payload);
-    if (projects.some((p) => p.id === project.id)) {
-      throw new Error('Project id already exists');
-    }
-    const next = [...projects, project];
-    await writeJsonAtomic(PROJECTS_FILE, next);
-    return project;
-  });
+async function createProject(companyId, payload) {
+  const project = normalizeProject(payload);
+  return dbService.createProject(companyId, project);
 }
 
-async function updateProject(id, payload) {
-  return queueWrite(async () => {
-    const projects = await listProjects();
-    const idx = projects.findIndex((p) => p.id === id);
-    if (idx < 0) throw new Error('Project not found');
-
-    const merged = normalizeProject({ ...projects[idx], ...payload, id }, projects[idx]);
-    const next = [...projects];
-    next[idx] = merged;
-    await writeJsonAtomic(PROJECTS_FILE, next);
-    return merged;
-  });
+async function updateProject(companyId, id, payload) {
+  const existing = await getProjectById(companyId, id);
+  if (!existing) throw new Error('Project not found');
+  const merged = normalizeProject({ ...existing, ...payload, id }, existing);
+  return dbService.updateProject(companyId, id, merged);
 }
 
-async function deleteProject(id) {
-  return queueWrite(async () => {
-    const projects = await listProjects();
-    const next = projects.filter((p) => p.id !== id);
-    if (next.length === projects.length) return false;
-    await writeJsonAtomic(PROJECTS_FILE, next);
-    return true;
-  });
+async function deleteProject(companyId, id) {
+  return dbService.deleteProject(companyId, id);
 }
 
-async function getCompanyInfo() {
-  return readJson(COMPANY_FILE, {});
+async function getCompanyInfo(companyId) {
+  return dbService.getCompanyInfo(companyId);
 }
 
-async function updateCompanyInfo(payload) {
-  return queueWrite(async () => {
-    const current = await getCompanyInfo();
-    const next = {
-      ...current,
-      ...payload,
-      leadership: Array.isArray(payload.leadership) ? payload.leadership : current.leadership,
-      areas: Array.isArray(payload.areas) ? payload.areas : current.areas,
-      projectTypes: Array.isArray(payload.projectTypes) ? payload.projectTypes : current.projectTypes,
-    };
-    await writeJsonAtomic(COMPANY_FILE, next);
-    return next;
-  });
+async function updateCompanyInfo(companyId, payload) {
+  const current = await getCompanyInfo(companyId);
+  const next = {
+    ...current,
+    ...payload,
+    leadership: Array.isArray(payload.leadership) ? payload.leadership : current.leadership,
+    areas: Array.isArray(payload.areas) ? payload.areas : current.areas,
+    projectTypes: Array.isArray(payload.projectTypes) ? payload.projectTypes : current.projectTypes,
+  };
+  return dbService.updateCompanyInfo(companyId, next);
 }
 
-async function getRelevantProjectInfo(transcript) {
+async function getRelevantProjectInfo(companyId, transcript) {
   const lower = transcript.toLowerCase();
   const isRelevant = TRIGGER_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
   if (!isRelevant) return '';
 
-  const projects = await listProjects();
+  const projects = await listProjects(companyId);
 
   // Match projects by their keywords
   const matched = projects.filter((p) =>

@@ -1,7 +1,8 @@
 const OpenAI = require('openai');
 const { getRelevantProjectInfo, getCompanyInfo } = require('./knowledgeBase');
-const { saveMessage, getRecentMessages, getSessionMessages, clearSessionDb } = require('./db');
+const { saveMessage, getRecentMessages, getSessionMessages, clearSessionDb, getAgentConfig } = require('./db');
 const { safeClientMessage } = require('../utils/sanitize');
+const { logger } = require('../utils/logger');
 
 function getOpenAI() {
   const key = process.env.OPENAI_API_KEY;
@@ -86,23 +87,30 @@ OBJECTION HANDLING PLAYBOOK:
 
 CRITICAL RULES:
 - ${languageInstruction}
-- SOUND HUMAN: Use conversational fillers, be warm, and do not sound like a robot reading a script.
+- SOUND HUMAN: Use conversational fillers naturally, e.g., అంటే..., చూడండి..., సాధారణంగా...
 - ANTI-REPETITION: Read the chat history carefully! NEVER ask a question if the user has already answered it (e.g., do not ask for budget if they already told you).
 - ULTRA SHORT: Keep responses to 1-2 short sentences maximum.
 - SPEED PRIORITY: Use plain, direct phrasing and avoid extra descriptive details unless explicitly asked.
 - ASK ONLY ONE: Always end with exactly one short question.
 - COMPLETENESS: Every response MUST end with proper punctuation (., ?, !, or ।). Never end with a partial word or unfinished phrase.
+- PAUSE MARKERS: Use a light "..." pause naturally only where it improves speech cadence.
 - FORMATTING: Do not use quotation marks in responses.
 - ENDING SIGNAL: When the conversation is naturally complete (goodbye/closing), append exactly [END_CALL] at the very end of your response.
 - ANTI-HALLUCINATION: Never make up prices, amenities, or projects that are not in the prompt.`;
 }
 
-async function buildSystemPrompt(transcript, leadContext, languageMode, agentName) {
-  const [projectInfo, companyInfo] = await Promise.all([
-    getRelevantProjectInfo(transcript),
-    getCompanyInfo(),
+async function buildSystemPrompt(companyId, transcript, leadContext, languageMode, agentName) {
+  const [projectInfo, companyInfo, agentConfig] = await Promise.all([
+    getRelevantProjectInfo(companyId, transcript),
+    getCompanyInfo(companyId),
+    getAgentConfig(companyId),
   ]);
-  let prompt = getBaseSystemPrompt(languageMode, companyInfo, agentName);
+  const effectiveName = agentConfig?.agent_name || agentName;
+  const effectiveLanguage = agentConfig?.language || languageMode;
+  let prompt = getBaseSystemPrompt(effectiveLanguage, companyInfo, effectiveName);
+  if (agentConfig?.tone) {
+    prompt += `\n\nTONE: ${agentConfig.tone}`;
+  }
 
   if (leadContext) {
     const leadLines = [
@@ -124,11 +132,11 @@ If a property in the context is 'Unknown', you must ask for it during the Discov
   return prompt;
 }
 
-async function createResponseStream(inputText, sessionId, leadContext, languageMode, agentName) {
+async function createResponseStream(inputText, sessionId, companyId, leadContext, languageMode, agentName) {
   const openai = getOpenAI();
-  await saveMessage(sessionId, 'user', inputText);
-  const recentMessages = await getRecentMessages(sessionId, 8);
-  const systemPrompt = await buildSystemPrompt(inputText, leadContext, languageMode, agentName);
+  await saveMessage(companyId, sessionId, 'user', inputText);
+  const recentMessages = await getRecentMessages(companyId, sessionId, 10);
+  const systemPrompt = await buildSystemPrompt(companyId, inputText, leadContext, languageMode, agentName);
 
   const stream = await openai.chat.completions.create({
     model: 'gpt-4o',
@@ -148,41 +156,47 @@ async function createResponseStream(inputText, sessionId, leadContext, languageM
  * Generates a streaming Telugu sales response for the given transcript.
  * Maintains conversation history per sessionId in SQLite.
  */
-async function generateResponseStream(transcript, sessionId, leadContext, languageMode, agentName) {
-  return createResponseStream(transcript, sessionId, leadContext, languageMode, agentName);
+async function generateResponseStream(transcript, sessionId, companyId, leadContext, languageMode, agentName) {
+  return createResponseStream(transcript, sessionId, companyId, leadContext, languageMode, agentName);
 }
 
-async function generateResponse(transcript, sessionId, leadContext = null, languageMode = 'telugu', agentName = 'Voice Agent') {
+async function generateResponse(transcript, sessionId, companyId, leadContext = null, languageMode = 'telugu', agentName = 'Voice Agent') {
   const openai = getOpenAI();
-  await saveMessage(sessionId, 'user', transcript);
-  const recentMessages = await getRecentMessages(sessionId, 8);
-  const systemPrompt = await buildSystemPrompt(transcript, leadContext, languageMode, agentName);
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...recentMessages.map(m => ({ role: m.role, content: m.content })),
-    ],
-    max_tokens: 64,
-    temperature: 0.2,
-  });
-
-  const text = response.choices[0]?.message?.content?.trim() || '';
-  if (text) {
-    await saveMessage(sessionId, 'assistant', text);
+  await saveMessage(companyId, sessionId, 'user', transcript);
+  const recentMessages = await getRecentMessages(companyId, sessionId, 10);
+  const systemPrompt = await buildSystemPrompt(companyId, transcript, leadContext, languageMode, agentName);
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
+        ],
+        max_tokens: 64,
+        temperature: 0.2,
+      });
+      const text = response.choices[0]?.message?.content?.trim() || '';
+      if (text) await saveMessage(companyId, sessionId, 'assistant', text);
+      return text;
+    } catch (err) {
+      lastError = err;
+      logger.warn('gpt_retry', { companyId, sessionId, attempt: attempt + 1, error: err.message });
+    }
   }
-  return text;
+  logger.error('gpt_failure', { companyId, sessionId, error: lastError?.message || 'Unknown' });
+  return 'క్షమించండి... ఒక సమస్య వచ్చింది. చూడండి, మళ్లీ ప్రయత్నించవచ్చా?';
 }
 
 /**
  * Generates an initial assistant-led intro for a new lead.
  */
-async function generateLeadIntroStream(sessionId, leadContext, introTemplate, languageMode, agentName) {
+async function generateLeadIntroStream(companyId, sessionId, leadContext, introTemplate, languageMode, agentName) {
   const leadName = leadContext?.name ? `${leadContext.name}` : 'కస్టమర్';
   const cleanTemplate = (introTemplate || '').trim();
   const safeAgentName = agentName || 'Voice Agent';
-  const companyInfo = await getCompanyInfo();
+  const companyInfo = await getCompanyInfo(companyId);
   const safeCompanyName = companyInfo?.name || safeAgentName;
   const renderedIntro = cleanTemplate
     ? cleanTemplate
@@ -192,12 +206,12 @@ async function generateLeadIntroStream(sessionId, leadContext, introTemplate, la
     : `హలో ${leadName} గారు, నేను ${safeAgentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?`;
 
   const introSeed = `This is a new outbound sales call. The lead's name is ${leadName}. Start the conversation by saying exactly this opening line: "${renderedIntro}". Do not add anything else to this first message. Wait for the user to confirm their availability before moving to Step 2 (Discovery).`;
-  return createResponseStream(introSeed, sessionId, leadContext, languageMode, agentName);
+  return createResponseStream(introSeed, sessionId, companyId, leadContext, languageMode, agentName);
 }
 
-async function generateCallSummary(sessionId, leadContext) {
+async function generateCallSummary(companyId, sessionId, leadContext) {
   const openai = getOpenAI();
-  const messages = await getSessionMessages(sessionId);
+  const messages = await getSessionMessages(companyId, sessionId);
   const transcript = messages
     .map((m) => `${m.role === 'assistant' ? 'Agent' : 'Lead'}: ${m.content}`)
     .join('\n');
@@ -222,7 +236,7 @@ async function generateCallSummary(sessionId, leadContext) {
         role: 'system',
         content: `You summarize outbound sales calls for the configured agent/company.
 Return ONLY valid JSON with keys:
-outcome, interestLevel, timeline, budgetConfirmed, locationConfirmed, nextAction, summaryNote.
+outcome, interestLevel, timeline, budgetConfirmed, locationConfirmed, nextAction, summaryNote, intent, objections.
 
 Rules:
 - outcome must be one of: interested, follow_up, not_interested, closed
@@ -249,14 +263,16 @@ Rules:
     locationConfirmed: parsed.locationConfirmed || '',
     nextAction: parsed.nextAction || 'Follow up with lead',
     summaryNote: parsed.summaryNote || 'Call summary generated.',
+    intent: parsed.intent || 'callback',
+    objections: parsed.objections || '',
   };
 }
 
 /**
  * Clears the conversation history for a session
  */
-async function clearSession(sessionId) {
-  await clearSessionDb(sessionId);
+async function clearSession(companyId, sessionId) {
+  await clearSessionDb(companyId, sessionId);
 }
 
 module.exports = {
