@@ -5,11 +5,6 @@ function assertCompanyId(companyId) {
   if (!companyId) throw new Error('companyId is required');
 }
 
-function getCompanyScopedQuery(supabase, table, companyId) {
-  assertCompanyId(companyId);
-  return supabase.from(table).eq('company_id', companyId);
-}
-
 async function ensureCompany(companyId, name = 'Voice Agent Company') {
   assertCompanyId(companyId);
   const supabase = getSupabase();
@@ -79,8 +74,8 @@ async function clearSessionDb(companyId, sessionId) {
   assertCompanyId(companyId);
   const supabase = getSupabase();
   await Promise.all([
-    getCompanyScopedQuery(supabase, 'messages', companyId).delete().eq('session_id', sessionId),
-    getCompanyScopedQuery(supabase, 'calls', companyId).delete().eq('session_id', sessionId),
+    supabase.from('messages').delete().eq('company_id', companyId).eq('session_id', sessionId),
+    supabase.from('calls').delete().eq('company_id', companyId).eq('session_id', sessionId),
   ]);
   return true;
 }
@@ -289,7 +284,6 @@ async function getAgentConfig(companyId) {
 }
 
 module.exports = {
-  getCompanyScopedQuery,
   saveMessage,
   getRecentMessages,
   getSessionMessages,
