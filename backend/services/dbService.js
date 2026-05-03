@@ -32,7 +32,6 @@ async function ensureCompany(companyId, name = 'Voice Agent Company') {
 async function saveMessage(companyId, sessionId, role, content, leadId = null) {
   assertCompanyId(companyId);
   const supabase = getSupabase();
-  await ensureCompany(companyId);
   const payload = {
     company_id: companyId,
     lead_id: leadId,
@@ -89,7 +88,6 @@ async function clearSessionDb(companyId, sessionId) {
 async function upsertLead(companyId, lead = {}) {
   assertCompanyId(companyId);
   const supabase = getSupabase();
-  await ensureCompany(companyId);
   if (!lead.phone && !lead.id) return null;
   const payload = {
     id: lead.id || undefined,
@@ -114,7 +112,6 @@ async function upsertLead(companyId, lead = {}) {
 async function logCall(companyId, sessionId, lead, durationSeconds, outcome, transcript = [], summary = '') {
   assertCompanyId(companyId);
   const supabase = getSupabase();
-  await ensureCompany(companyId);
   const leadId = await upsertLead(companyId, lead);
   const payload = {
     company_id: companyId,

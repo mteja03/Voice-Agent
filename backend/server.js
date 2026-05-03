@@ -1,4 +1,25 @@
 require('dotenv').config();
+
+const isProdLike =
+  process.env.NODE_ENV === 'production' ||
+  Boolean(process.env.RAILWAY_ENVIRONMENT);
+const requiredEnvVars = [
+  'OPENAI_API_KEY',
+  'SARVAM_API_KEY',
+  'SUPABASE_URL',
+  'JWT_SECRET',
+  ...(isProdLike ? ['SUPABASE_SERVICE_ROLE_KEY'] : []),
+];
+const missingEnvVars = requiredEnvVars.filter((name) => !String(process.env[name] || '').trim());
+
+if (missingEnvVars.length > 0) {
+  for (const name of missingEnvVars) {
+    console.error(`[Startup] Missing required environment variable: ${name}`);
+  }
+  process.exit(1);
+}
+
+console.info(`[Startup] env_validated vars_checked=${requiredEnvVars.length}`);
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -17,7 +38,7 @@ const { requestIdMiddleware } = require('./middleware/requestContext');
 const { verifyAccessToken } = require('./utils/authUtils');
 const { sendSuccess, sendError } = require('./utils/response');
 const asyncHandler = require('./utils/asyncHandler');
-const { errorHandler: expressErrorHandler } = require('./utils/errorHandler');
+const { errorHandler: expressErrorHandler, notFoundHandler } = require('./utils/errorHandler');
 const { emitSocketError } = require('./utils/socketEmit');
 const { verifyUserContext, loadVerifiedUserContext } = require('./middleware/verifyUserContext');
 const { getCompanyInfo } = require('./services/knowledgeBase');
@@ -91,7 +112,7 @@ app.get(
       hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
       hasSarvamKey: Boolean(process.env.SARVAM_API_KEY),
       hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
-      hasSupabaseKey: Boolean(process.env.SUPABASE_KEY),
+      hasSupabaseServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
       hasJwtSecret: Boolean(process.env.JWT_SECRET),
       allowedOrigins: ALLOWED_ORIGINS,
       port: Number(process.env.PORT || PORT),
@@ -125,6 +146,7 @@ app.get(
   })
 );
 
+app.use(notFoundHandler);
 app.use(expressErrorHandler);
 
 const server = http.createServer(app);
@@ -430,7 +452,6 @@ io.on('connection', (socket) => {
       logger.info('call_started', { companyId, sessionId, leadPhone: lead?.phone || null });
       const requestStartMs = nowMs();
       const fullAssistantMessage = await renderIntroMessage(companyId, lead, introTemplate, agentName);
-      const llmFirstTokenMs = 0;
 
       if (signal.aborted) return;
 
@@ -455,7 +476,7 @@ io.on('connection', (socket) => {
         const doneAt = nowMs();
         const toFirstAudioMs = ttsResult.emitted ? doneAt - ttsResult.ttsMs - requestStartMs : null;
         console.log(
-          `[Latency] session=${sessionId} stt_ms=0 llm_first_token_ms=${llmFirstTokenMs ?? 'na'} tts_chunks=${ttsResult.emitted ? 1 : 0} tts_total_ms=${ttsResult.ttsMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${(doneAt - requestStartMs).toFixed(1)}`
+          `[Latency] session=${sessionId} stt_ms=0 llm_first_token_ms=na tts_chunks=${ttsResult.emitted ? 1 : 0} tts_total_ms=${ttsResult.ttsMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${(doneAt - requestStartMs).toFixed(1)}`
         );
       }
     } catch (err) {
