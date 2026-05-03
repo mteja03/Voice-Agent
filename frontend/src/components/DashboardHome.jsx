@@ -59,7 +59,8 @@ export default function DashboardHome({ leads }) {
         )}
       </header>
 
-      <div className="flex-1 overflow-auto p-8 custom-scrollbar">
+      <div className="flex-1 overflow-auto custom-scrollbar">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-8 py-8">
         {/* Global Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard 
@@ -216,6 +217,7 @@ export default function DashboardHome({ leads }) {
               )}
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>

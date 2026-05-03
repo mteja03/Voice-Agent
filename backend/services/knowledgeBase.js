@@ -95,28 +95,74 @@ async function updateCompanyInfo(companyId, payload) {
 }
 
 async function getRelevantProjectInfo(companyId, transcript) {
+  if (!transcript || !transcript.trim()) return '';
+
+  async function keywordThenTop3SafetyNet(logVectorEmpty) {
+    if (logVectorEmpty) console.log('[RAG] Vector search empty, falling back to keyword matching');
+    const fallback = await keywordFallback(companyId, transcript);
+    if (fallback) return fallback;
+    const allProjects = await listProjects(companyId);
+    return formatProjectsForPrompt(allProjects.slice(0, 3));
+  }
+
+  try {
+    // Try vector search first
+    const { getEmbedding } = require('./embeddingService');
+    const { getSupabase } = require('./supabaseClient');
+
+    const embedding = await getEmbedding(transcript);
+    const supabase = getSupabase();
+
+    const formattedEmbedding = `[${embedding.join(',')}]`;
+
+    const { data: vectorResults, error } = await supabase.rpc('match_projects', {
+      query_embedding: formattedEmbedding,
+      match_company_id: companyId,
+      match_threshold: 0.15,
+      match_count: 3,
+    });
+
+    if (error) {
+      console.warn('[RAG] RPC error:', error.message);
+      return keywordThenTop3SafetyNet(false);
+    }
+
+    if (vectorResults && vectorResults.length > 0) {
+      console.log(`[RAG] Vector search found ${vectorResults.length} projects`);
+      return formatProjectsForPrompt(vectorResults);
+    }
+
+    // Vector search empty — use keyword fallback then top 3 safety net
+    return keywordThenTop3SafetyNet(true);
+  } catch (err) {
+    // If embedding fails (e.g. OpenAI down), fall back gracefully
+    console.warn('[RAG] Vector search failed, using keyword fallback:', err.message);
+    return keywordThenTop3SafetyNet(false);
+  }
+}
+
+async function keywordFallback(companyId, transcript) {
   const lower = transcript.toLowerCase();
   const isRelevant = TRIGGER_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
   if (!isRelevant) return '';
 
   const projects = await listProjects(companyId);
-
-  // Match projects by their keywords
   const matched = projects.filter((p) =>
     (p.keywords || []).some((kw) => lower.includes(String(kw).toLowerCase()))
   );
+  const list = matched.length > 0 ? matched : projects.slice(0, 3);
+  return formatProjectsForPrompt(list);
+}
 
-  // Return matched projects, or top 5 most relevant if no keyword match
-  const list = matched.length > 0 ? matched : projects.slice(0, 5);
-
-  return list
+function formatProjectsForPrompt(projects) {
+  return projects
     .map(
       (p) =>
-        `Project: ${p.name} (${p.nameTeluguHint})\n` +
+        `Project: ${p.name}\n` +
         `Type: ${p.type}\n` +
         `Location: ${p.location}\n` +
         `Description: ${p.description}\n` +
-        `Highlights: ${p.highlights}\n` +
+        `Highlights: ${p.highlights || ''}\n` +
         `Offer: ${p.offer}\n` +
         `Amenities: ${(p.amenities || []).slice(0, 5).join(', ')}\n` +
         `Site Visit: ${p.siteVisitAvailable ? 'Available' : 'Contact us'}\n` +

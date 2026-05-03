@@ -43,7 +43,7 @@ async function checkOpenAIKey() {
   }
 }
 
-function getBaseSystemPrompt(languageMode = 'telugu', companyInfo = {}, agentName = 'Voice Agent') {
+function getBaseSystemPrompt(languageMode = 'telugu', companyInfo = {}, agentName = 'Voice Agent', leadContext = null) {
   const languageInstruction = languageMode === 'english'
     ? 'ALWAYS respond in English only.'
     : languageMode === 'hindi'
@@ -52,77 +52,106 @@ function getBaseSystemPrompt(languageMode = 'telugu', companyInfo = {}, agentNam
     ? 'Respond in the lead\'s language. If unclear, prefer Telugu with short, simple phrasing.'
     : 'ALWAYS respond in Telugu script only (తెలుగులో మాట్లాడండి)';
 
-  return `You are ${agentName}, a top-performing, Telugu-speaking real estate sales executive. Your goal is to qualify leads, build trust, handle objections naturally, and drive the customer toward a site visit.
+  return `You are ${agentName}, an experienced Telugu-speaking real estate sales executive at ${companyInfo.name || 'our company'}. You sound warm, natural, and human — never robotic or scripted.
 
-COMPANY INFO:
-- Company: ${companyInfo.name || 'Voice Agent'}
-- Head Office: ${companyInfo.headOffice || '69-31-15/1 Narayanapuram, Rajahmundry 533106, Andhra Pradesh'}
-- Phone: ${companyInfo.phone || '+91 9985555330'}
+COMPANY:
+- Name: ${companyInfo.name || '—'}
+- Phone: ${companyInfo.phone || '—'}
+- Address: ${companyInfo.headOffice || '—'}
 
-SB VENTURES PROJECTS:
-Rajahmundry – Apartments: Serene Krishna (Smart luxury), Casa Levanta (Luxury views), La Flora (Next-gen smart, biometric).
-Rajahmundry – Plots: Lorven City (Namavaram Main Rd), Rome City (Roman theme, Airport Rd), Grand Egypt Plots (Egyptian township), Airport City (Premium).
-Rajahmundry – Villas: Grand Egypt Villas (Duplex), Grand Egypt 2BHK Villas (Affordable), Purple Leaf (Premium), SB Pristine Villas (Premium w/ pool).
-Kakinada – Apartments: Exotica (Premium), Primus (Homely).
-Kakinada – Plots: Spring Leaf (Green), SB City Plots (Pithapuram Hwy), D'Milano (European), Habitat (Eco-friendly).
-Kakinada – Villas: SB City Villas.
+LANGUAGE RULES:
+${languageInstruction}
+- Use natural fillers: "అవును...", "చూడండి...", "అర్థమైంది...", "సరే..."
+- Mirror the lead's energy — if they're brief, be brief. If they're chatty, be warmer.
+- Never sound like you're reading from a script.
+- Use the lead's name naturally 1-2 times per call, not every turn.
 
-YOUR CONVERSATIONAL FRAMEWORK ("Acknowledge-Answer-Ask"):
-Every time you speak, follow this exact structure:
-1. ACKNOWLEDGE: Briefly validate what the user just said (e.g., "I understand", "That's a great choice", "No problem").
-2. ANSWER: Provide a concise, highly relevant response or pitch based ONLY on the context provided.
-3. ASK: End with exactly ONE simple follow-up question to keep the conversation moving forward.
+CONVERSATION FRAMEWORK:
+Follow this funnel but adapt naturally — don't mechanically march through steps:
 
-YOUR SALES FUNNEL (Identify where you are in the funnel and move to the next step):
-- Step 1. Intro: Confirm if it's a good time to talk.
-- Step 2. Discovery: Ask about their preferred location (Rajahmundry/Kakinada), property type (plot/villa/apartment), and budget.
-- Step 3. Pitching: Recommend exactly ONE best-fit project based on Discovery. Do NOT list multiple projects unless explicitly asked.
-- Step 4. Closing: Confidently ask if they are available for a site visit this weekend. Share the company phone number (+91 9985555330).
+STEP 1 — OPENING: Confirm it's a good time. If they say busy, offer a specific callback time.
+STEP 2 — DISCOVERY: Understand location preference, property type, budget, timeline. 
+  - Ask ONE question at a time.
+  - If they already answered something, NEVER ask again.
+  - Track what you know: location=${leadContext?.location || 'unknown'}, budget=${leadContext?.budget || 'unknown'}
+STEP 3 — PITCH: Recommend exactly ONE best-fit project. Be specific, not generic.
+  - Lead with the benefit that matches their need, not the project name.
+  - Example: "మీరు అఫోర్డబుల్ అని చెప్పారు కదా — Grand Egypt 2BHK విల్లాలు మీకు బాగా సూటవుతాయి."
+STEP 4 — HANDLE OBJECTIONS naturally:
+  - Price concern: "అర్థమైంది. బడ్జెట్ విషయంలో మీకు comfortable range ఏది?"
+  - Not interested: "సరే, పర్లేదు! మీ సమయానికి ధన్యవాదాలు. మంచి రోజు గడపండి!" then [END_CALL]
+  - Busy: "క్షమించండి interrupt చేసినందుకు! సాయంత్రం 6కి మళ్ళీ call చేయనా?"
+  - Just looking: "అర్థమైంది — investment కోసమా లేక నివాసం కోసమా చూస్తున్నారు?"
+STEP 5 — CLOSE: Ask for site visit. Share phone number only if they show interest.
+  - "ఈ weekend మీకు convenient అయితే site visit arrange చేయగలను — ఎలా ఉంటుంది?"
 
-OBJECTION HANDLING PLAYBOOK:
-- If "I am busy / No time": "Sorry to interrupt! I'll be quick. [1-sentence pitch]. Can I call you back this evening?"
-- If "Too expensive / Out of budget": "I completely understand. Budget is important. We have affordable options like [Project] as well. What is your comfortable range?"
-- If "Just looking / No immediate plan": "That's perfectly fine, it's always smart to plan ahead. Are you looking strictly for investment or to build a home eventually?"
-- If "Not interested at all": "No problem at all! Thank you for your time. Have a great day!" (And gracefully end the conversation).
+MEMORY RULES (critical):
+- Read ALL previous messages before responding.
+- Never repeat a question already answered.
+- If lead said location → skip location question.
+- If lead said budget → skip budget question.
+- Build on what you know: "మీరు రాజమండ్రి అని చెప్పారు కదా..."
+
+RESPONSE RULES:
+- Max 2 short sentences per turn.
+- Always end with exactly ONE question (except closing).
+- Never use quotation marks in responses.
+- Every response must end with proper punctuation.
+- Append [END_CALL] only when conversation is genuinely complete.
 
 CRITICAL RULES:
-- ${languageInstruction}
-- SOUND HUMAN: Use conversational fillers naturally, e.g., అంటే..., చూడండి..., సాధారణంగా...
-- ANTI-REPETITION: Read the chat history carefully! NEVER ask a question if the user has already answered it (e.g., do not ask for budget if they already told you).
-- ULTRA SHORT: Keep responses to 1-2 short sentences maximum.
-- SPEED PRIORITY: Use plain, direct phrasing and avoid extra descriptive details unless explicitly asked.
-- ASK ONLY ONE: Always end with exactly one short question.
-- COMPLETENESS: Every response MUST end with proper punctuation (., ?, !, or ।). Never end with a partial word or unfinished phrase.
-- PAUSE MARKERS: Use a light "..." pause naturally only where it improves speech cadence.
-- FORMATTING: Do not use quotation marks in responses.
-- ENDING SIGNAL: When the conversation is naturally complete (goodbye/closing), append exactly [END_CALL] at the very end of your response.
-- ANTI-HALLUCINATION: Never make up prices, amenities, or projects that are not in the prompt.`;
+- ANTI-HALLUCINATION (STRICT): You can ONLY mention projects that appear in the RELEVANT PROJECT DATA section below. If no project data is provided, say "మా టీమ్ మీకు సరైన ప్రాజెక్ట్ సూచిస్తారు" and ask for a site visit. NEVER invent project names.
+- If you don't have specific project details, say so honestly rather than making up information.`;
 }
 
-async function buildSystemPrompt(companyId, transcript, leadContext, languageMode, agentName) {
+function extractConversationFacts(messages) {
+  const facts = [];
+  const combined = messages.map(m => m.content).join(' ').toLowerCase();
+  
+  // Location mentions
+  if (combined.includes('రాజమండ్రి') || combined.includes('rajahmundry')) facts.push('- Location: Rajahmundry (already mentioned)');
+  if (combined.includes('కాకినాడ') || combined.includes('kakinada')) facts.push('- Location: Kakinada (already mentioned)');
+  
+  // Property type
+  if (combined.includes('ప్లాట్') || combined.includes('plot')) facts.push('- Property type: Plot (already mentioned)');
+  if (combined.includes('అపార్ట్మెంట్') || combined.includes('apartment') || combined.includes('flat')) facts.push('- Property type: Apartment (already mentioned)');
+  if (combined.includes('విల్లా') || combined.includes('villa')) facts.push('- Property type: Villa (already mentioned)');
+  
+  // Budget signals
+  if (combined.includes('లక్ష') || combined.includes('lakh') || combined.includes('budget') || combined.includes('బడ్జెట్')) facts.push('- Budget: Discussed (check exact message)');
+  
+  // Interest level
+  if (combined.includes('interested') || combined.includes('ఆసక్తి')) facts.push('- Lead has shown interest');
+  if (combined.includes('busy') || combined.includes('బిజీ')) facts.push('- Lead mentioned being busy');
+  
+  return facts.length > 0 ? facts.join('\n') : null;
+}
+
+async function buildSystemPrompt(companyId, sessionId, transcript, leadContext, languageMode, agentName) {
   const [projectInfo, companyInfo, agentConfig] = await Promise.all([
     getRelevantProjectInfo(companyId, transcript),
     getCompanyInfo(companyId),
     getAgentConfig(companyId),
   ]);
-  const effectiveName = agentConfig?.agent_name || agentName;
-  const effectiveLanguage = agentConfig?.language || languageMode;
-  let prompt = getBaseSystemPrompt(effectiveLanguage, companyInfo, effectiveName);
+  const effectiveName = agentConfig?.agentName || agentConfig?.agent_name || agentName || 'Voice Agent';
+  const effectiveLanguage = agentConfig?.languageMode || agentConfig?.language || languageMode || 'telugu';
+  let prompt = getBaseSystemPrompt(effectiveLanguage, companyInfo, effectiveName, leadContext);
   if (agentConfig?.tone) {
     prompt += `\n\nTONE: ${agentConfig.tone}`;
   }
 
-  if (leadContext) {
-    const leadLines = [
-      `Name: ${leadContext.name || 'Unknown'}`,
-      `Preferred Location: ${leadContext.location || 'Unknown'}`,
-      `Budget: ${leadContext.budget || 'Unknown'}`,
-      `Notes: ${leadContext.notes || 'None'}`,
-    ].join(' | ');
+  if (leadContext && (leadContext.name || leadContext.notes)) {
+    prompt += `\n\nLEAD RECORD (CRM): name=${leadContext.name || '—'} | notes=${leadContext.notes || '—'}`;
+  }
 
-    prompt += `\n\nCURRENT LEAD CONTEXT:
-[ ${leadLines} ]
-If a property in the context is 'Unknown', you must ask for it during the Discovery phase. If it is already known, DO NOT ask for it again. Use the lead's name occasionally to build rapport.`;
+  // Extract what we already know from conversation history
+  const recentMsgs = await getRecentMessages(companyId, sessionId || 'unknown', 20);
+  const conversationFacts = extractConversationFacts(recentMsgs);
+
+  if (conversationFacts) {
+    prompt += `\n\nWHAT WE ALREADY KNOW FROM THIS CONVERSATION:
+${conversationFacts}
+DO NOT ask about any of the above again.`;
   }
 
   if (projectInfo) {
@@ -136,7 +165,7 @@ async function createResponseStream(inputText, sessionId, companyId, leadContext
   const openai = getOpenAI();
   await saveMessage(companyId, sessionId, 'user', inputText);
   const recentMessages = await getRecentMessages(companyId, sessionId, 10);
-  const systemPrompt = await buildSystemPrompt(companyId, inputText, leadContext, languageMode, agentName);
+  const systemPrompt = await buildSystemPrompt(companyId, sessionId, inputText, leadContext, languageMode, agentName);
 
   const stream = await openai.chat.completions.create({
     model: 'gpt-4o',
@@ -164,7 +193,7 @@ async function generateResponse(transcript, sessionId, companyId, leadContext = 
   const openai = getOpenAI();
   await saveMessage(companyId, sessionId, 'user', transcript);
   const recentMessages = await getRecentMessages(companyId, sessionId, 10);
-  const systemPrompt = await buildSystemPrompt(companyId, transcript, leadContext, languageMode, agentName);
+  const systemPrompt = await buildSystemPrompt(companyId, sessionId, transcript, leadContext, languageMode, agentName);
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -223,8 +252,14 @@ async function generateCallSummary(companyId, sessionId, leadContext) {
       timeline: 'unknown',
       budgetConfirmed: leadContext?.budget || '',
       locationConfirmed: leadContext?.location || '',
+      propertyTypeConfirmed: 'unknown',
       nextAction: 'Retry call later',
       summaryNote: 'No usable conversation captured.',
+      intent: 'unknown',
+      objections: 'none',
+      lostReason: 'unknown',
+      positiveSignals: '',
+      callQuality: 'no_speech',
     };
   }
 
@@ -234,16 +269,30 @@ async function generateCallSummary(companyId, sessionId, leadContext) {
     messages: [
       {
         role: 'system',
-        content: `You summarize outbound sales calls for the configured agent/company.
-Return ONLY valid JSON with keys:
-outcome, interestLevel, timeline, budgetConfirmed, locationConfirmed, nextAction, summaryNote, intent, objections.
+        content: `You summarize outbound Telugu real estate sales calls.
+Return ONLY valid JSON with these exact keys:
+
+{
+  "outcome": "interested | follow_up | not_interested | closed",
+  "interestLevel": "high | medium | low | unknown",
+  "timeline": "immediate | 1-3 months | 3-6 months | not decided | unknown",
+  "budgetConfirmed": "exact budget mentioned or empty string",
+  "locationConfirmed": "location mentioned or empty string",
+  "propertyTypeConfirmed": "plot | apartment | villa | unknown",
+  "nextAction": "specific next step",
+  "summaryNote": "2 sentence max summary",
+  "intent": "buy | invest | just_looking | callback | unknown",
+  "objections": "price | location | timing | trust | not_interested | none",
+  "lostReason": "why the lead did not convert — price_too_high | wrong_location | bad_timing | not_interested | call_dropped | unknown",
+  "positiveSignals": "any buying signals shown",
+  "callQuality": "good | poor | no_speech | incomplete"
+}
 
 Rules:
-- outcome must be one of: interested, follow_up, not_interested, closed
-- interestLevel should be: high, medium, low, unknown
-- timeline should be short text
-- summaryNote max 2 sentences
-- Be conservative if confidence is low.`,
+- outcome must be one of the 4 values exactly
+- lostReason: only fill if outcome is not_interested or follow_up
+- callQuality poor = lead was unresponsive or call was very short
+- Be conservative — unknown is better than a wrong guess`,
       },
       {
         role: 'user',
@@ -261,10 +310,14 @@ Rules:
     timeline: parsed.timeline || 'unknown',
     budgetConfirmed: parsed.budgetConfirmed || '',
     locationConfirmed: parsed.locationConfirmed || '',
+    propertyTypeConfirmed: parsed.propertyTypeConfirmed || 'unknown',
     nextAction: parsed.nextAction || 'Follow up with lead',
     summaryNote: parsed.summaryNote || 'Call summary generated.',
-    intent: parsed.intent || 'callback',
-    objections: parsed.objections || '',
+    intent: parsed.intent || 'unknown',
+    objections: parsed.objections || 'none',
+    lostReason: parsed.lostReason || 'unknown',
+    positiveSignals: parsed.positiveSignals || '',
+    callQuality: parsed.callQuality || 'good',
   };
 }
 

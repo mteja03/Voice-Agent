@@ -1,6 +1,19 @@
 const { getSupabase } = require('./supabaseClient');
 const { logger } = require('../utils/logger');
 
+async function embedProjectInBackground(projectId, project) {
+  const { embedProject } = require('./embeddingService');
+  const { getSupabase } = require('./supabaseClient');
+  const embedding = await embedProject(project);
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from('projects')
+    .update({ embedding })
+    .eq('id', projectId);
+  if (error) throw error;
+  console.log(`[Embed] Project embedded: ${project.name}`);
+}
+
 function assertCompanyId(companyId) {
   if (!companyId) throw new Error('companyId is required');
 }
@@ -189,7 +202,6 @@ async function getProjectById(companyId, id) {
 async function createProject(companyId, payload) {
   assertCompanyId(companyId);
   const supabase = getSupabase();
-  await ensureCompany(companyId);
   const row = {
     company_id: companyId,
     name: payload.name,
@@ -204,6 +216,12 @@ async function createProject(companyId, payload) {
   };
   const { data, error } = await supabase.from('projects').insert(row).select('*').single();
   if (error) throw error;
+
+  // Embed in background — don't block the response
+  embedProjectInBackground(data.id, data).catch((err) =>
+    console.warn('[Embed] Failed to embed new project:', err.message)
+  );
+
   return data;
 }
 
@@ -212,16 +230,19 @@ async function updateProject(companyId, id, payload) {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('projects')
-    .update({
-      ...payload,
-      metadata: payload,
-    })
+    .update({ ...payload, metadata: payload })
     .eq('company_id', companyId)
     .eq('id', id)
     .select('*')
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Project not found');
+
+  // Re-embed in background after update
+  embedProjectInBackground(data.id, data).catch((err) =>
+    console.warn('[Embed] Failed to re-embed updated project:', err.message)
+  );
+
   return data;
 }
 
@@ -280,7 +301,65 @@ async function getAgentConfig(companyId) {
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data || null;
+  return normalizeAgentConfig(data);
+}
+
+function normalizeAgentConfig(row) {
+  if (!row) return null;
+  const s = row.settings || {};
+  return {
+    agentName: row.agent_name || s.agentName || 'Voice Agent',
+    ttsVoice: s.ttsVoice || 'aditya',
+    ttsModel: s.ttsModel || 'bulbul:v3',
+    sttModel: s.sttModel || 'saaras:v3',
+    ttsProvider: s.ttsProvider || 'sarvam',
+    autoEndCall: s.autoEndCall !== undefined ? s.autoEndCall : true,
+    languageMode: row.language || s.languageMode || 'telugu',
+    introTemplate: row.intro_template || s.introTemplate || null,
+    tone: row.tone || null,
+  };
+}
+
+async function upsertAgentConfig(companyId, payload) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const row = {
+    company_id: companyId,
+    agent_name: payload.agentName || 'Voice Agent',
+    tone: payload.tone || null,
+    language: payload.languageMode || 'telugu',
+    intro_template: payload.introTemplate || null,
+    settings: {
+      ttsVoice: payload.ttsVoice || 'aditya',
+      ttsModel: payload.ttsModel || 'bulbul:v3',
+      sttModel: payload.sttModel || 'saaras:v3',
+      ttsProvider: payload.ttsProvider || 'sarvam',
+      autoEndCall: payload.autoEndCall !== undefined ? payload.autoEndCall : true,
+      languageMode: payload.languageMode || 'telugu',
+      agentName: payload.agentName || 'Voice Agent',
+      introTemplate: payload.introTemplate || null,
+    },
+  };
+
+  const { data: existing } = await supabase
+    .from('agent_configs')
+    .select('id')
+    .eq('company_id', companyId)
+    .maybeSingle();
+
+  let data, error;
+  if (existing) {
+    ({ data, error } = await supabase
+      .from('agent_configs')
+      .update(row)
+      .eq('id', existing.id)
+      .select('*')
+      .single());
+  } else {
+    ({ data, error } = await supabase.from('agent_configs').insert(row).select('*').single());
+  }
+  if (error) throw error;
+  return normalizeAgentConfig(data);
 }
 
 module.exports = {
@@ -298,5 +377,6 @@ module.exports = {
   getCompanyInfo,
   updateCompanyInfo,
   getAgentConfig,
+  upsertAgentConfig,
   upsertLead,
 };

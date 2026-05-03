@@ -8,6 +8,8 @@ import Dialer from './components/Dialer';
 import AgentConfig from './components/AgentConfig';
 import { login, register, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
+import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
+import { Loader2 } from 'lucide-react';
 
 const SESSION_ID = uuidv4();
 
@@ -136,8 +138,23 @@ export default function App() {
   
   const activeLead = leads.find((lead) => lead.id === activeLeadId) || null;
 
-  const { status, turns, errorMsg, closeDetected, callNotice, clearSession, vadLoading, vadError, isVadListening, startVad, pauseVad, endCall, retryIntro } =
-    useVoiceAgent(SESSION_ID, settings, activeLead);
+  const {
+    status,
+    turns,
+    errorMsg,
+    closeDetected,
+    callNotice,
+    lastCallSummary,
+    clearSession,
+    retryConnection,
+    vadLoading,
+    vadError,
+    isVadListening,
+    startVad,
+    pauseVad,
+    endCall,
+    retryIntro,
+  } = useVoiceAgent(SESSION_ID, settings, activeLead);
 
   useEffect(() => {
     if (!authUser?.isMasterAdmin) {
@@ -152,6 +169,17 @@ export default function App() {
       .finally(() => setTenantsLoading(false));
   }, [authUser?.isMasterAdmin]);
 
+  useEffect(() => {
+    if (!authUser) return;
+    fetchAgentConfig()
+      .then((config) => {
+        if (config) {
+          setSettings((prev) => ({ ...DEFAULT_SETTINGS, ...prev, ...config }));
+        }
+      })
+      .catch((err) => console.warn('Failed to load agent config:', err.message));
+  }, [authUser?.activeCompanyId]);
+
   const handleTabChange = useCallback((tabId) => {
     setActiveTab(tabId);
   }, []);
@@ -159,6 +187,9 @@ export default function App() {
   const handleSettingsChange = useCallback((next) => {
     setSettings(next);
     localStorage.setItem(LS_KEYS.settings, JSON.stringify(next));
+    saveAgentConfig(next).catch((err) =>
+      console.warn('Failed to save agent config:', err.message)
+    );
   }, []);
 
   const handleLeadsChange = useCallback((nextLeads) => {
@@ -248,91 +279,108 @@ export default function App() {
     <div className="flex h-screen w-full bg-black overflow-hidden font-sans antialiased text-gray-200">
       <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
 
-      <main className="flex-1 relative flex flex-col min-w-0 overflow-hidden">
-        {activeTab === 'dashboard' && <DashboardHome leads={leads} />}
-        {activeTab === 'campaigns' && (
-          <Campaigns 
-            leads={leads} 
-            activeLead={activeLead} 
-            onLeadsChange={handleLeadsChange} 
-            onActiveLeadChange={handleActiveLeadChange}
-            onNavigateToDialer={() => setActiveTab('dialer')}
-          />
-        )}
-        {activeTab === 'dialer' && (
-          <Dialer
-            status={status}
-            turns={turns}
-            errorMsg={errorMsg}
-            closeDetected={closeDetected}
-            vadLoading={vadLoading}
-            vadError={vadError}
-            isVadListening={isVadListening}
-            startVad={startVad}
-            pauseVad={pauseVad}
-            endCall={endCall}
-            retryIntro={retryIntro}
-            activeLead={activeLead}
-            leads={leads}
-            handleNextLeadQuick={handleNextLeadQuick}
-            settings={settings}
-            summaryNote={callNotice}
-          />
-        )}
-        {activeTab === 'agent-config' && (
-          <AgentConfig 
-            settings={settings} 
-            onSettingsChange={handleSettingsChange} 
-          />
-        )}
-      </main>
-      <div className="absolute top-3 right-3 flex items-center gap-2">
-        {authUser?.isMasterAdmin && (
-          <>
-            <select
-              className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 min-w-[180px]"
-              value={authUser.activeCompanyId || ''}
-              onChange={(e) => handleTenantSwitch(e.target.value)}
-              disabled={tenantsLoading}
-              title="Switch organization"
-            >
-              <option value="" disabled>
-                {tenantsLoading ? 'Loading organizations...' : 'Select organization'}
-              </option>
-              {tenants.map((tenant) => (
-                <option key={tenant.id} value={tenant.id}>
-                  {tenant.name}
-                </option>
-              ))}
-            </select>
-            <input
-              value={newTenantName}
-              onChange={(e) => setNewTenantName(e.target.value)}
-              placeholder="New organization"
-              className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 w-40"
-            />
-            <button
-              onClick={handleCreateTenant}
-              disabled={tenantsLoading || !newTenantName.trim()}
-              className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 disabled:opacity-60"
-            >
-              Create
-            </button>
-          </>
-        )}
-        <button
-          onClick={handleLogout}
-          className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700"
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header
+          className="flex-shrink-0 flex flex-wrap items-center justify-end gap-x-2 gap-y-2 px-4 py-2.5 border-b border-gray-800/60 bg-gray-950/95 backdrop-blur-sm z-30"
+          aria-label="Account and workspace"
         >
-          Logout
-        </button>
-      </div>
-      {tenantActionError && (
-        <div className="absolute top-12 right-3 text-xs text-red-300 bg-red-900/20 border border-red-900/40 rounded px-2 py-1">
-          {tenantActionError}
-        </div>
-      )}
+          {authUser?.isMasterAdmin && (
+            <>
+              <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wider hidden md:inline shrink-0">
+                Organization
+              </span>
+              <select
+                className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 min-w-[160px] max-w-[220px] shrink-0 min-h-[44px] sm:min-h-0"
+                value={authUser.activeCompanyId || ''}
+                onChange={(e) => handleTenantSwitch(e.target.value)}
+                disabled={tenantsLoading}
+                aria-busy={tenantsLoading}
+                title="Switch organization"
+              >
+                <option value="" disabled>
+                  {tenantsLoading ? 'Loading organizations...' : 'Select organization'}
+                </option>
+                {tenants.map((tenant) => (
+                  <option key={tenant.id} value={tenant.id}>
+                    {tenant.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={newTenantName}
+                onChange={(e) => setNewTenantName(e.target.value)}
+                placeholder="New organization"
+                className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 w-36 min-w-0 sm:w-40 shrink min-h-[44px] sm:min-h-0"
+                aria-label="New organization name"
+              />
+              <button
+                type="button"
+                onClick={handleCreateTenant}
+                disabled={tenantsLoading || !newTenantName.trim()}
+                className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 disabled:opacity-60 shrink-0 min-h-[44px] sm:min-h-0"
+              >
+                Create
+              </button>
+            </>
+          )}
+          {authUser?.isMasterAdmin && tenantsLoading && (
+            <span className="flex items-center gap-1.5 text-[11px] text-gray-500 shrink-0" aria-live="polite">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" aria-hidden />
+              Working…
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 shrink-0 min-h-[44px] sm:min-h-0"
+          >
+            Logout
+          </button>
+        </header>
+        {tenantActionError && (
+          <div className="flex-shrink-0 px-4 py-2 text-xs text-red-300 bg-red-950/40 border-b border-red-900/40">
+            {tenantActionError}
+          </div>
+        )}
 
+        <main className="flex-1 relative flex flex-col min-w-0 overflow-hidden">
+          {activeTab === 'dashboard' && <DashboardHome leads={leads} />}
+          {activeTab === 'campaigns' && (
+            <Campaigns
+              leads={leads}
+              activeLead={activeLead}
+              onLeadsChange={handleLeadsChange}
+              onActiveLeadChange={handleActiveLeadChange}
+              onNavigateToDialer={() => setActiveTab('dialer')}
+            />
+          )}
+          {activeTab === 'dialer' && (
+            <Dialer
+              status={status}
+              turns={turns}
+              errorMsg={errorMsg}
+              closeDetected={closeDetected}
+              vadLoading={vadLoading}
+              vadError={vadError}
+              isVadListening={isVadListening}
+              startVad={startVad}
+              pauseVad={pauseVad}
+              endCall={endCall}
+              retryIntro={retryIntro}
+              activeLead={activeLead}
+              leads={leads}
+              handleNextLeadQuick={handleNextLeadQuick}
+              settings={settings}
+              summaryNote={callNotice}
+              lastCallSummary={lastCallSummary}
+              onRetryConnection={retryConnection}
+            />
+          )}
+          {activeTab === 'agent-config' && (
+            <AgentConfig settings={settings} onSettingsChange={handleSettingsChange} />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

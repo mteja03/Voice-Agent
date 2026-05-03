@@ -68,7 +68,10 @@ export default function RecordButton({ status, isVadListening, startVad, pauseVa
       </div>
 
       <p className="text-sm text-gray-300 text-center">{label}</p>
-      <p className="text-[11px] text-gray-500 -mt-3">Tap once to start, tap again to pause</p>
+      <p className="text-[11px] text-gray-500 -mt-3 max-w-xs text-center leading-relaxed">
+        Same as <span className="text-gray-400">Start</span> / <span className="text-gray-400">Pause</span> above — use whichever you prefer.
+        Tap once to start listening, tap again to pause.
+      </p>
     </div>
   );
 }

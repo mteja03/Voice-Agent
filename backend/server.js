@@ -31,6 +31,7 @@ const authRouter = require('./routes/auth');
 const conversationRouter = require('./routes/conversation');
 const knowledgeBaseRouter = require('./routes/knowledgeBase');
 const analyticsRouter = require('./routes/analytics');
+const agentConfigRouter = require('./routes/agentConfig');
 const tenantsRouter = require('./routes/tenants');
 const { authMiddleware } = require('./middleware/auth');
 const { requireCompanyId } = require('./middleware/tenant');
@@ -52,9 +53,9 @@ const { logger } = require('./utils/logger');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const { OPENAI_API_KEY, SARVAM_API_KEY } = process.env;
-const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 8);
-const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 24);
-const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 90);
+const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 60);
+const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 100);
+const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 200);
 const END_CALL_MARKER = '[END_CALL]';
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
   .split(',')
@@ -94,6 +95,7 @@ app.use('/api/tenants', authMiddleware, verifyUserContext, tenantsRouter);
 app.use('/api', authMiddleware, verifyUserContext, requireCompanyId, conversationRouter);
 app.use('/api/kb', authMiddleware, verifyUserContext, requireCompanyId, knowledgeBaseRouter);
 app.use('/api/analytics', authMiddleware, verifyUserContext, requireCompanyId, analyticsRouter);
+app.use('/api/agent-config', authMiddleware, verifyUserContext, requireCompanyId, agentConfigRouter);
 
 app.get('/', (req, res) => {
   res.send('Server is running');
@@ -197,6 +199,8 @@ const activeSessions = new Map(); // socketId → AbortController
 const sessionStartTimes = new Map(); // sessionId → startTime in ms
 // Keep this strict to avoid accidental auto-hangups during normal polite replies.
 const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|goodbye|bye|have a great day|हम फिर बात करेंगे)/i;
+const STT_TIMEOUT_MS = 15000;
+const TTS_TIMEOUT_MS = 20000;
 
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
@@ -309,21 +313,37 @@ io.on('connection', (socket) => {
     const normalizedText = normalizeTtsText(text);
     if (!normalizedText || normalizedText.length < 3 || signal.aborted) return { emitted: false, ttsMs: 0 };
     const ttsStart = nowMs();
-    const audioBase64 = await synthesizeSpeech(
-      normalizedText,
-      ttsVoice || 'shubh',
-      ttsModel || 'bulbul:v3',
-      resolveLanguageCode(languageMode)
-    );
-    const ttsMs = nowMs() - ttsStart;
-    if (!signal.aborted) {
-      socket.emit('tts_audio_chunk', {
-        audioBuffer: Buffer.from(audioBase64, 'base64'),
-        text: normalizedText,
-      });
-      return { emitted: true, ttsMs };
+    try {
+      const ttsPromise = synthesizeSpeech(
+        normalizedText,
+        ttsVoice || 'shubh',
+        ttsModel || 'bulbul:v3',
+        resolveLanguageCode(languageMode)
+      );
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('TTS timeout after 20s')), TTS_TIMEOUT_MS)
+      );
+      const audioBase64 = await Promise.race([ttsPromise, timeoutPromise]);
+      const ttsMs = nowMs() - ttsStart;
+      if (!signal.aborted) {
+        socket.emit('tts_audio_chunk', {
+          audioBuffer: Buffer.from(audioBase64, 'base64'),
+          text: normalizedText,
+        });
+        return { emitted: true, ttsMs };
+      }
+      return { emitted: false, ttsMs };
+    } catch (ttsErr) {
+      const ttsMs = nowMs() - ttsStart;
+      if (String(ttsErr?.message || '').includes('timeout')) {
+        console.warn('[TTS] Timeout — emitting text only');
+        if (!signal.aborted) {
+          socket.emit('tts_audio_chunk', { audioBuffer: null, text: normalizedText });
+        }
+        return { emitted: false, ttsMs };
+      }
+      throw ttsErr;
     }
-    return { emitted: false, ttsMs };
   }
 
   async function streamAssistantResponse({ stream, signal, socket, companyId, sessionId, ttsModel, ttsVoice, languageMode, timingMeta }) {
@@ -516,10 +536,22 @@ io.on('connection', (socket) => {
       // retry with language auto-detection (no language_code).
       let transcript = '';
       try {
-        transcript = await transcribeAudio(
-          audioBuffer, 'audio/wav', sttModel || 'saaras:v3', resolveSttLanguageCode(languageMode)
+        const sttPromise = transcribeAudio(
+          audioBuffer,
+          'audio/wav',
+          sttModel || 'saaras:v3',
+          resolveSttLanguageCode(languageMode)
         );
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
+        );
+        transcript = await Promise.race([sttPromise, timeoutPromise]);
       } catch (sttErr) {
+        if (String(sttErr?.message || '').includes('timeout')) {
+          console.warn('[STT] Timeout — skipping turn');
+          emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
+          return;
+        }
         if (isEmptySttError(sttErr)) {
           console.log('[STT] Empty transcript on primary attempt');
           transcript = '';
@@ -534,13 +566,20 @@ io.on('connection', (socket) => {
       if (transcript.length === 0) {
         console.log('[STT Fallback] Retrying with unknown lang (empty transcript)');
         try {
-          const fallbackTranscript = await transcribeAudio(
-            audioBuffer, 'audio/wav', sttModel || 'saaras:v3', 'unknown'
+          const sttPromise = transcribeAudio(audioBuffer, 'audio/wav', sttModel || 'saaras:v3', 'unknown');
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
           );
+          const fallbackTranscript = await Promise.race([sttPromise, timeoutPromise]);
           if (fallbackTranscript.length >= transcript.length) {
             transcript = fallbackTranscript;
           }
         } catch (fallbackErr) {
+          if (String(fallbackErr?.message || '').includes('timeout')) {
+            console.warn('[STT] Timeout — skipping turn (fallback)');
+            emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
+            return;
+          }
           if (!isEmptySttError(fallbackErr)) {
             console.warn('[STT Fallback] Failed, using original transcript:', fallbackErr.message);
           }

@@ -5,6 +5,21 @@ import KnowledgeBaseProjectForm from './KnowledgeBaseProjectForm';
 
 const VOICES = ['aditya', 'ritu', 'ashutosh', 'priya', 'neha', 'rahul', 'pooja', 'rohan', 'simran', 'kavya', 'amit', 'dev', 'ishita', 'shreya', 'ratan', 'varun', 'manan', 'sumit', 'roopa', 'kabir', 'aayan', 'shubh', 'advait', 'anand', 'tanya', 'tarun', 'sunny', 'mani', 'gokul', 'vijay', 'shruti', 'suhani', 'mohit', 'kavitha', 'rehan', 'soham', 'rupali', 'niharika'];
 
+const EMPTY_COMPANY_FORM = {
+  name: '',
+  tagline: '',
+  phone: '',
+  email: '',
+  website: '',
+  headOffice: '',
+  areas: '',
+  projectTypes: '',
+  socialFacebook: '',
+};
+
+const inputClass =
+  'w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500';
+
 export default function AgentConfig({ settings, onSettingsChange }) {
   const [activeTab, setActiveTab] = useState('general');
   const [toasts, setToasts] = useState([]);
@@ -13,7 +28,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
   // --- Knowledge Base State ---
   const [projects, setProjects] = useState([]);
   const [companyInfo, setCompanyInfo] = useState({});
-  const [companyDraft, setCompanyDraft] = useState('');
+  const [companyForm, setCompanyForm] = useState(EMPTY_COMPANY_FORM);
   const [kbLoading, setKbLoading] = useState(false);
   const [kbError, setKbError] = useState('');
   const [kbPane, setKbPane] = useState('company'); // 'company' or 'projects'
@@ -34,7 +49,6 @@ export default function AgentConfig({ settings, onSettingsChange }) {
       const [{ projects: items }, { companyInfo: info }] = await Promise.all([listProjects(), getCompanyInfo()]);
       setProjects(items || []);
       setCompanyInfo(info || {});
-      setCompanyDraft(JSON.stringify(info || {}, null, 2));
     } catch (err) {
       setKbError(err.message);
     } finally {
@@ -47,6 +61,41 @@ export default function AgentConfig({ settings, onSettingsChange }) {
       loadKb();
     }
   }, [activeTab, loadKb]);
+
+  const companyProfileDirty = useMemo(() => {
+    const i = companyInfo || {};
+    const saved = {
+      name: i.name != null ? String(i.name) : '',
+      tagline: i.tagline != null ? String(i.tagline) : '',
+      phone: i.phone != null ? String(i.phone) : '',
+      email: i.email != null ? String(i.email) : '',
+      website: i.website != null ? String(i.website) : '',
+      headOffice: i.headOffice != null ? String(i.headOffice) : '',
+      areas: Array.isArray(i.areas) ? i.areas.map((a) => String(a).trim()).filter(Boolean).join(', ') : '',
+      projectTypes: Array.isArray(i.projectTypes)
+        ? i.projectTypes.map((t) => String(t).trim()).filter(Boolean).join(', ')
+        : '',
+      socialFacebook: i.socialFacebook != null ? String(i.socialFacebook) : '',
+    };
+    return JSON.stringify(companyForm) !== JSON.stringify(saved);
+  }, [companyForm, companyInfo]);
+
+  useEffect(() => {
+    const info = companyInfo || {};
+    setCompanyForm({
+      name: info.name != null ? String(info.name) : '',
+      tagline: info.tagline != null ? String(info.tagline) : '',
+      phone: info.phone != null ? String(info.phone) : '',
+      email: info.email != null ? String(info.email) : '',
+      website: info.website != null ? String(info.website) : '',
+      headOffice: info.headOffice != null ? String(info.headOffice) : '',
+      areas: Array.isArray(info.areas) ? info.areas.map((a) => String(a).trim()).filter(Boolean).join(', ') : '',
+      projectTypes: Array.isArray(info.projectTypes)
+        ? info.projectTypes.map((t) => String(t).trim()).filter(Boolean).join(', ')
+        : '',
+      socialFacebook: info.socialFacebook != null ? String(info.socialFacebook) : '',
+    });
+  }, [companyInfo]);
 
   const pushToast = (message, tone = 'success') => {
     const id = toastIdRef.current++;
@@ -63,12 +112,31 @@ export default function AgentConfig({ settings, onSettingsChange }) {
   const saveCompany = async () => {
     try {
       setKbError('');
-      const parsed = JSON.parse(companyDraft || '{}');
-      const { companyInfo: next } = await updateCompanyInfo(parsed);
+      const areas = companyForm.areas
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const projectTypes = companyForm.projectTypes
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const payload = {
+        ...companyInfo,
+        name: companyForm.name.trim(),
+        tagline: companyForm.tagline.trim(),
+        phone: companyForm.phone.trim(),
+        email: companyForm.email.trim(),
+        website: companyForm.website.trim(),
+        headOffice: companyForm.headOffice.trim(),
+        areas,
+        projectTypes,
+        socialFacebook: companyForm.socialFacebook.trim(),
+      };
+      const { companyInfo: next } = await updateCompanyInfo(payload);
       setCompanyInfo(next || {});
       pushToast('Company info saved successfully');
     } catch (err) {
-      setKbError('Invalid JSON format');
+      setKbError(err.message || 'Failed to save company profile');
       pushToast('Failed to save company info', 'error');
     }
   };
@@ -109,6 +177,9 @@ export default function AgentConfig({ settings, onSettingsChange }) {
       <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
         {activeTab === 'general' && (
           <div className="max-w-3xl space-y-8">
+            <p className="text-xs text-gray-500 -mt-1">
+              Voice, language, and schedule changes save automatically to your workspace when you edit them.
+            </p>
             <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
               <h2 className="text-lg font-semibold text-white mb-6">Agent Personalization</h2>
               
@@ -191,9 +262,13 @@ export default function AgentConfig({ settings, onSettingsChange }) {
         )}
 
         {activeTab === 'knowledge-base' && (
-          <div className="max-w-5xl flex gap-6 h-[600px]">
+          <div className="max-w-5xl flex flex-col gap-3 h-[600px]">
+            <p className="text-xs text-gray-500 shrink-0">
+              Company profile uses <span className="text-gray-400">Save Profile</span>. Projects are saved when you create or update them. Without projects, the agent has no inventory to discuss.
+            </p>
+            <div className="flex gap-6 flex-1 min-h-0">
             {/* KB Sidebar */}
-            <div className="w-64 bg-gray-900/50 border border-gray-800/60 rounded-2xl flex flex-col overflow-hidden">
+            <div className="w-64 bg-gray-900/50 border border-gray-800/60 rounded-2xl flex flex-col overflow-hidden shrink-0">
               <button
                 onClick={() => setKbPane('company')}
                 className={`w-full text-left px-4 py-4 border-b border-gray-800/60 flex items-center gap-3 transition-colors ${kbPane === 'company' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}
@@ -213,6 +288,22 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
+                  {projects.length === 0 && !kbLoading && (
+                    <div className="px-2 py-4 text-center space-y-2">
+                      <p className="text-[11px] text-gray-500 leading-relaxed">No projects in the knowledge base yet.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setKbPane('projects');
+                          setCreating(true);
+                          setSelectedId(null);
+                        }}
+                        className="text-xs px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 w-full min-h-[44px]"
+                      >
+                        Add first project
+                      </button>
+                    </div>
+                  )}
                   {projects.map(p => (
                     <button
                       key={p.id}
@@ -227,22 +318,118 @@ export default function AgentConfig({ settings, onSettingsChange }) {
             </div>
 
             {/* KB Content */}
-            <div className="flex-1 bg-gray-900/50 border border-gray-800/60 rounded-2xl overflow-hidden shadow-xl flex flex-col">
+            <div className="flex-1 min-w-0 bg-gray-900/50 border border-gray-800/60 rounded-2xl overflow-hidden shadow-xl flex flex-col">
               {kbPane === 'company' ? (
                 <>
-                  <div className="p-4 border-b border-gray-800/60 flex items-center justify-between bg-gray-900/50">
-                    <h2 className="text-md font-semibold text-white">Company Information (JSON)</h2>
-                    <button onClick={saveCompany} className="px-4 py-2 rounded-xl text-xs font-medium text-white bg-brand-600 hover:bg-brand-500">
+                  <div className="p-4 border-b border-gray-800/60 flex flex-wrap items-center justify-between gap-2 bg-gray-900/50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h2 className="text-md font-semibold text-white">Company Profile</h2>
+                      {companyProfileDirty && (
+                        <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/90 shrink-0">
+                          Unsaved changes
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={saveCompany}
+                      className="px-4 py-2 rounded-xl text-xs font-medium text-white bg-brand-600 hover:bg-brand-500 min-h-[44px] sm:min-h-0"
+                    >
                       Save Profile
                     </button>
                   </div>
-                  <div className="flex-1 p-4">
-                    <textarea
-                      value={companyDraft}
-                      onChange={(e) => setCompanyDraft(e.target.value)}
-                      className="w-full h-full bg-gray-950 border border-gray-800 rounded-xl p-4 text-sm text-gray-300 font-mono focus:outline-none focus:border-brand-500 custom-scrollbar"
-                      spellCheck="false"
-                    />
+                  <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                    <div className="space-y-5 max-w-3xl">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Company Name</label>
+                        <input
+                          type="text"
+                          value={companyForm.name}
+                          onChange={(e) => setCompanyForm((prev) => ({ ...prev, name: e.target.value }))}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Tagline</label>
+                        <input
+                          type="text"
+                          value={companyForm.tagline}
+                          onChange={(e) => setCompanyForm((prev) => ({ ...prev, tagline: e.target.value }))}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-400 mb-2">Phone</label>
+                          <input
+                            type="text"
+                            value={companyForm.phone}
+                            onChange={(e) => setCompanyForm((prev) => ({ ...prev, phone: e.target.value }))}
+                            className={inputClass}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-400 mb-2">Email</label>
+                          <input
+                            type="text"
+                            value={companyForm.email}
+                            onChange={(e) => setCompanyForm((prev) => ({ ...prev, email: e.target.value }))}
+                            className={inputClass}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-400 mb-2">Website</label>
+                          <input
+                            type="text"
+                            value={companyForm.website}
+                            onChange={(e) => setCompanyForm((prev) => ({ ...prev, website: e.target.value }))}
+                            className={inputClass}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-400 mb-2">Facebook URL</label>
+                          <input
+                            type="text"
+                            value={companyForm.socialFacebook}
+                            onChange={(e) => setCompanyForm((prev) => ({ ...prev, socialFacebook: e.target.value }))}
+                            className={inputClass}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Head Office Address</label>
+                        <textarea
+                          rows={2}
+                          value={companyForm.headOffice}
+                          onChange={(e) => setCompanyForm((prev) => ({ ...prev, headOffice: e.target.value }))}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Operating Areas</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Hyderabad, Vizag, Vijayawada"
+                          value={companyForm.areas}
+                          onChange={(e) => setCompanyForm((prev) => ({ ...prev, areas: e.target.value }))}
+                          className={inputClass}
+                        />
+                        <p className="text-xs text-gray-500 mt-1.5">Comma-separated list.</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Project Types</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Plots, Villas, Apartments"
+                          value={companyForm.projectTypes}
+                          onChange={(e) => setCompanyForm((prev) => ({ ...prev, projectTypes: e.target.value }))}
+                          className={inputClass}
+                        />
+                        <p className="text-xs text-gray-500 mt-1.5">Comma-separated list.</p>
+                      </div>
+                    </div>
                   </div>
                 </>
               ) : (
@@ -271,11 +458,15 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                 </>
               )}
             </div>
+            </div>
           </div>
         )}
 
         {activeTab === 'conversation' && (
           <div className="max-w-3xl space-y-8">
+            <p className="text-xs text-gray-500 -mt-1">
+              Intro and consent text save automatically to your workspace when you edit them.
+            </p>
             <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
               <h2 className="text-lg font-semibold text-white mb-2">Introduction Messaging</h2>
               <p className="text-xs text-gray-400 mb-6">Customize the first message the Agent will say when the call connects. Available placeholders: {'{leadName}'}, {'{agentName}'}, {'{companyName}'}.</p>

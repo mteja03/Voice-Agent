@@ -1,5 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { Upload, Trash2, Phone, Filter, ChevronRight, CheckCircle2, Play, Search, AlertCircle, Users } from 'lucide-react';
+
+function normalizePhoneDigits(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
 
 const EXPECTED_HEADERS = ['name', 'phone', 'location', 'budget', 'source', 'notes'];
 const OUTCOMES = ['new', 'interested', 'follow_up', 'not_interested', 'closed'];
@@ -51,9 +55,15 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingImport, setPendingImport] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkOutcome, setBulkOutcome] = useState('follow_up');
   const fileInputRef = useRef(null);
 
   const hasLeads = leads.length > 0;
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [activeFilter, searchQuery]);
 
   const handleUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -82,8 +92,21 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
         id: mergedLead.id || `${lead.phone || 'lead'}-${idx}-${Date.now()}`,
       };
     });
-    const duplicatePhoneCount = parsed.filter((lead) => lead.phone && leads.some((item) => item.phone === lead.phone)).length;
-    const invalidPhoneCount = parsed.filter((lead) => lead.phone && !/^\d{10}$/.test(lead.phone.replace(/\D/g, ''))).length;
+    const duplicateRows = [];
+    const invalidRows = [];
+    parsed.forEach((lead, idx) => {
+      const rowNum = idx + 2;
+      const d = normalizePhoneDigits(lead.phone);
+      const dup =
+        Boolean(lead.phone) &&
+        leads.some((item) => item.phone && normalizePhoneDigits(item.phone) === d && d.length === 10);
+      if (dup) duplicateRows.push({ row: rowNum, name: lead.name || '', phone: lead.phone || '' });
+      if (lead.phone && d.length !== 10) {
+        invalidRows.push({ row: rowNum, name: lead.name || '', phone: lead.phone || '' });
+      }
+    });
+    const duplicatePhoneCount = duplicateRows.length;
+    const invalidPhoneCount = invalidRows.length;
     setPendingImport({
       leads: merged,
       stats: {
@@ -91,6 +114,8 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
         duplicatePhoneCount,
         invalidPhoneCount,
       },
+      duplicateRows,
+      invalidRows,
     });
     event.target.value = '';
   };
@@ -111,6 +136,37 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
       return matchesFilter && matchesSearch;
     });
   }, [leads, activeFilter, searchQuery]);
+
+  const allFilteredSelected =
+    filteredLeads.length > 0 && filteredLeads.every((l) => selectedIds.has(l.id));
+
+  const toggleSelectAllFiltered = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredLeads.map((l) => l.id)));
+    }
+  };
+
+  const toggleSelectOne = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const applyBulkOutcome = () => {
+    if (selectedIds.size === 0) return;
+    const ts = new Date().toISOString();
+    onLeadsChange(
+      leads.map((l) =>
+        selectedIds.has(l.id) ? { ...l, lastOutcome: bulkOutcome, lastUpdatedAt: ts } : l
+      )
+    );
+    setSelectedIds(new Set());
+  };
 
   const clearAllLeads = () => {
     if (confirm('Are you sure you want to clear all leads in this campaign?')) {
@@ -158,7 +214,8 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-8 custom-scrollbar">
+      <div className="flex-1 overflow-auto custom-scrollbar">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-8 py-8">
         {error && (
           <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 text-red-400">
             <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
@@ -187,16 +244,50 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
                 <p className="text-2xl font-bold text-red-400 mt-1">{pendingImport.stats.invalidPhoneCount}</p>
               </div>
             </div>
+            {pendingImport.duplicateRows?.length > 0 && (
+              <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+                <p className="text-xs font-semibold text-amber-400 mb-2">Possible duplicate phones (already in list)</p>
+                <ul className="text-xs text-gray-400 space-y-1 max-h-32 overflow-y-auto custom-scrollbar font-mono">
+                  {pendingImport.duplicateRows.slice(0, 15).map((r) => (
+                    <li key={`d-${r.row}`}>
+                      Row {r.row}: {r.name || '—'} · {r.phone}
+                    </li>
+                  ))}
+                </ul>
+                {pendingImport.duplicateRows.length > 15 && (
+                  <p className="text-[11px] text-gray-500 mt-2">
+                    + {pendingImport.duplicateRows.length - 15} more
+                  </p>
+                )}
+              </div>
+            )}
+            {pendingImport.invalidRows?.length > 0 && (
+              <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/5 p-4">
+                <p className="text-xs font-semibold text-red-400 mb-2">Invalid phone (need 10 digits)</p>
+                <ul className="text-xs text-gray-400 space-y-1 max-h-32 overflow-y-auto custom-scrollbar font-mono">
+                  {pendingImport.invalidRows.slice(0, 15).map((r) => (
+                    <li key={`i-${r.row}`}>
+                      Row {r.row}: {r.name || '—'} · {r.phone}
+                    </li>
+                  ))}
+                </ul>
+                {pendingImport.invalidRows.length > 15 && (
+                  <p className="text-[11px] text-gray-500 mt-2">
+                    + {pendingImport.invalidRows.length - 15} more
+                  </p>
+                )}
+              </div>
+            )}
             <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setPendingImport(null)}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 transition-colors"
+                className="px-4 py-2 rounded-xl text-sm font-medium text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 transition-colors min-h-[44px]"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmImport}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-brand-600 hover:bg-brand-500 transition-colors shadow-lg shadow-brand-500/20"
+                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-brand-600 hover:bg-brand-500 transition-colors shadow-lg shadow-brand-500/20 min-h-[44px]"
               >
                 Confirm Import
               </button>
@@ -214,6 +305,40 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
           </div>
         ) : hasLeads && (
           <div className="flex flex-col gap-6">
+            {selectedIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-gray-900/90 border border-brand-500/25">
+                <span className="text-sm text-gray-200 font-medium">{selectedIds.size} selected</span>
+                <label className="text-xs text-gray-500 sr-only" htmlFor="bulk-outcome">
+                  Set outcome
+                </label>
+                <select
+                  id="bulk-outcome"
+                  value={bulkOutcome}
+                  onChange={(e) => setBulkOutcome(e.target.value)}
+                  className="text-xs px-3 py-2 rounded-lg bg-gray-950 border border-gray-700 text-white min-h-[44px]"
+                >
+                  {OUTCOMES.map((o) => (
+                    <option key={o} value={o}>
+                      {o.replace('_', ' ')}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={applyBulkOutcome}
+                  className="text-xs px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-500 min-h-[44px]"
+                >
+                  Apply outcome
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs px-3 py-2 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 min-h-[44px]"
+                >
+                  Clear selection
+                </button>
+              </div>
+            )}
             {/* Filters & Search */}
             <div className="flex flex-col sm:flex-row gap-4 justify-between">
               <div className="flex items-center gap-2 bg-gray-900 p-1.5 rounded-xl border border-gray-800/60 overflow-x-auto">
@@ -254,6 +379,15 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
               <table className="w-full text-left text-sm text-gray-400">
                 <thead className="bg-gray-900/80 text-gray-300 text-xs uppercase tracking-wider font-semibold border-b border-gray-800/60">
                   <tr>
+                    <th className="pl-4 pr-2 py-4 w-10">
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-600 w-4 h-4 accent-brand-500"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllFiltered}
+                        aria-label="Select all visible leads"
+                      />
+                    </th>
                     <th className="px-6 py-4">Name</th>
                     <th className="px-6 py-4">Phone</th>
                     <th className="px-6 py-4">Location</th>
@@ -266,6 +400,15 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
                     const isNextInLine = lead.status === 'new' && lead.id === activeLead?.id;
                     return (
                       <tr key={lead.id} className={`hover:bg-gray-800/30 transition-colors group ${isNextInLine ? 'bg-brand-500/5' : ''}`}>
+                        <td className="pl-4 pr-2 py-4 align-middle">
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-600 w-4 h-4 accent-brand-500"
+                            checked={selectedIds.has(lead.id)}
+                            onChange={() => toggleSelectOne(lead.id)}
+                            aria-label={`Select ${lead.name || 'lead'}`}
+                          />
+                        </td>
                         <td className="px-6 py-4">
                           <div className="font-medium text-gray-200">{lead.name || 'Unknown'}</div>
                           {lead.budget && <div className="text-xs text-gray-500 mt-0.5">Budget: {lead.budget}</div>}
@@ -291,7 +434,7 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
                   })}
                   {filteredLeads.length === 0 && (
                     <tr>
-                      <td colSpan="5" className="px-6 py-8 text-center text-gray-500">
+                      <td colSpan="6" className="px-6 py-8 text-center text-gray-500">
                         No leads found matching your criteria.
                       </td>
                     </tr>
@@ -301,6 +444,7 @@ export default function Campaigns({ leads, activeLead, onLeadsChange, onActiveLe
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

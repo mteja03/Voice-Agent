@@ -9,6 +9,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const [errorMsg, setErrorMsg] = useState(null);
   const [closeDetected, setCloseDetected] = useState(false);
   const [callNotice, setCallNotice] = useState('');
+  const [lastCallSummary, setLastCallSummary] = useState(null);
   
   const socketRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -179,6 +180,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     };
 
     const handleCallSummary = ({ summary }) => {
+      setLastCallSummary(summary && typeof summary === 'object' ? summary : null);
       setCallNotice('Call ended and summary saved.');
       setTimeout(() => setCallNotice(''), 4000);
       if (typeof onCallSummaryRef.current === 'function') {
@@ -353,9 +355,18 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     hasSentIntroRef.current = false;
     autoListenEnabledRef.current = false;
     setCloseDetected(false);
+    setLastCallSummary(null);
   }, [sessionId]);
 
+  const retryConnection = useCallback(() => {
+    setErrorMsg(null);
+    if (getAuthToken() && socketRef.current && !socketRef.current.connected) {
+      socketRef.current.connect();
+    }
+  }, []);
+
   const startVoiceAssistant = useCallback(async () => {
+    setLastCallSummary(null);
     autoListenEnabledRef.current = true;
     if (!hasSentIntroRef.current && turns.length === 0 && socketRef.current?.connected) {
       hasSentIntroRef.current = true;
@@ -397,6 +408,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
 
   const retryIntro = useCallback(async () => {
     if (!socketRef.current?.connected) return;
+    setLastCallSummary(null);
     autoListenEnabledRef.current = true;
     hasSentIntroRef.current = true;
     suppressBargeInUntilRef.current = Date.now() + 2500;
@@ -426,7 +438,9 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     errorMsg,
     closeDetected,
     callNotice,
+    lastCallSummary,
     clearSession,
+    retryConnection,
     vadLoading: vad.loading,
     vadError: vad.errored,
     isVadListening: vad.listening,
