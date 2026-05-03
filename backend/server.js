@@ -40,9 +40,11 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
   .filter(Boolean);
 
 function resolveTrustProxy(value) {
-  if (value == null || value === '') return process.env.NODE_ENV === 'production' ? 1 : false;
+  const isProd = process.env.NODE_ENV === 'production';
+  const isRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+  if (value == null || value === '') return isProd || isRailway ? 1 : false;
   if (value === 'true') return true;
-  if (value === 'false') return false;
+  if (value === 'false') return isProd || isRailway ? 1 : false;
   const asNumber = Number(value);
   return Number.isFinite(asNumber) ? asNumber : value;
 }
