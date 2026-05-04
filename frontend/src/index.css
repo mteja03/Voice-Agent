@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-black text-gray-100 antialiased;
+    @apply bg-slate-100 text-slate-900 antialiased dark:bg-black dark:text-gray-100;
     font-family: 'Inter', sans-serif;
     overscroll-behavior-y: none;
   }
@@ -13,12 +13,21 @@
     @apply box-border;
   }
 
-  button, select {
+  button,
+  select,
+  a,
+  input,
+  textarea {
     @apply outline-none;
   }
 
-  :focus-visible {
-    @apply ring-2 ring-brand-400/70 ring-offset-2 ring-offset-black;
+  button:focus-visible,
+  select:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible {
+    @apply ring-2 ring-brand-400/80 ring-offset-2 ring-offset-slate-100 dark:ring-offset-black;
   }
 
   ::-webkit-scrollbar {
@@ -29,10 +38,10 @@
     @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-800 rounded-full border-[1px] border-black;
+    @apply rounded-full border border-slate-200 bg-slate-300 dark:border-black dark:bg-gray-800;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-700;
+    @apply bg-slate-400 dark:bg-gray-700;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -57,22 +66,30 @@
   }
 
   .surface-card {
-    @apply bg-gray-900/60 border border-gray-800/70 shadow-xl shadow-black/40 backdrop-blur-md rounded-2xl;
+    @apply rounded-2xl border border-slate-200/90 bg-white/90 text-slate-900 shadow-md shadow-slate-200/60 backdrop-blur-md dark:border-gray-800/70 dark:bg-gray-900/60 dark:text-gray-200 dark:shadow-black/40;
   }
 
   .ui-surface {
-    @apply bg-gray-900/40 border border-gray-800/60 backdrop-blur-sm;
+    @apply border border-slate-200/90 bg-white/80 text-slate-900 backdrop-blur-sm dark:border-gray-800/60 dark:bg-gray-900/40 dark:text-gray-200;
   }
 
   .ui-muted {
-    @apply bg-gray-800/80 border border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors;
+    @apply border border-slate-300 bg-slate-100 text-slate-800 transition-colors hover:bg-slate-200 hover:text-slate-950 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white;
   }
 
   .ui-primary {
-    @apply bg-brand-600 border border-brand-500 text-white hover:bg-brand-500 transition-colors shadow-lg shadow-brand-500/20;
+    @apply border border-brand-500 bg-brand-600 text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-500 dark:shadow-brand-500/20;
   }
 
   .ui-pill {
-    @apply rounded-full text-[11px] px-3 py-1.5 font-medium border transition-colors;
+    @apply rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors;
+  }
+
+  .app-stack-gap {
+    @apply gap-6 md:gap-8;
+  }
+
+  .app-shell-padding {
+    @apply px-4 py-6 sm:px-8 sm:py-8;
   }
 }

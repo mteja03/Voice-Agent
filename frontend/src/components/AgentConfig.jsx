@@ -1,7 +1,22 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Settings, BookOpen, MessageSquare, Save, CheckCircle2, AlertCircle, Plus, Search, Building, FileText } from 'lucide-react';
+import {
+  Settings,
+  BookOpen,
+  MessageSquare,
+  Save,
+  CheckCircle2,
+  AlertCircle,
+  Plus,
+  Search,
+  Building,
+  FileText,
+  Loader2,
+  Copy,
+  Check,
+} from 'lucide-react';
 import { listProjects, createProject, updateProject, deleteProject, getCompanyInfo, updateCompanyInfo } from '../services/kbApi';
 import KnowledgeBaseProjectForm from './KnowledgeBaseProjectForm';
+import { CONVERSATION_PLACEHOLDER_GROUPS } from '../constants/conversationPlaceholders';
 
 const VOICES = ['aditya', 'ritu', 'ashutosh', 'priya', 'neha', 'rahul', 'pooja', 'rohan', 'simran', 'kavya', 'amit', 'dev', 'ishita', 'shreya', 'ratan', 'varun', 'manan', 'sumit', 'roopa', 'kabir', 'aayan', 'shubh', 'advait', 'anand', 'tanya', 'tarun', 'sunny', 'mani', 'gokul', 'vijay', 'shruti', 'suhani', 'mohit', 'kavitha', 'rehan', 'soham', 'rupali', 'niharika'];
 
@@ -18,12 +33,18 @@ const EMPTY_COMPANY_FORM = {
 };
 
 const inputClass =
-  'w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500';
+  'w-full bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white dark:placeholder:text-gray-500';
 
-export default function AgentConfig({ settings, onSettingsChange }) {
+export default function AgentConfig({
+  settings,
+  onSettingsChange,
+  settingsSaveUi = { status: 'idle', errorMessage: '' },
+  agentConfigLoadError = '',
+}) {
   const [activeTab, setActiveTab] = useState('general');
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(1);
+  const prevSaveStatusRef = useRef('idle');
 
   // --- Knowledge Base State ---
   const [projects, setProjects] = useState([]);
@@ -103,6 +124,14 @@ export default function AgentConfig({ settings, onSettingsChange }) {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
+  useEffect(() => {
+    const st = settingsSaveUi?.status || 'idle';
+    if (st === 'error' && prevSaveStatusRef.current !== 'error' && settingsSaveUi?.errorMessage) {
+      pushToast(settingsSaveUi.errorMessage, 'error');
+    }
+    prevSaveStatusRef.current = st;
+  }, [settingsSaveUi?.status, settingsSaveUi?.errorMessage]);
+
   // --- Settings Handlers ---
   const handleUpdateSetting = (key, value) => {
     onSettingsChange({ ...settings, [key]: value });
@@ -162,12 +191,28 @@ export default function AgentConfig({ settings, onSettingsChange }) {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-gray-950 text-gray-200 relative">
-      <header className="px-8 py-6 border-b border-gray-800/60 bg-gray-900/30 backdrop-blur">
-        <h1 className="text-2xl font-bold text-white tracking-tight">Agent Configuration</h1>
-        <p className="text-sm text-gray-400 mt-1">Configure your AI agent's personality, knowledge, and conversation scripts.</p>
-        
-        <div className="flex gap-6 mt-6 border-b border-gray-800">
+    <div className="flex-1 flex flex-col h-full bg-slate-100 text-slate-800 dark:bg-gray-950 dark:text-gray-200 relative">
+      <header className="px-8 py-6 border-b border-slate-200/80 dark:border-gray-800/60 bg-white/70 backdrop-blur dark:bg-gray-900/30">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Agent Configuration</h1>
+            <p className="text-sm text-slate-600 dark:text-gray-400 mt-1">
+              Configure your AI agent&apos;s personality, knowledge, and conversation scripts.
+            </p>
+          </div>
+          <WorkspaceSaveStatus settingsSaveUi={settingsSaveUi} />
+        </div>
+        {agentConfigLoadError ? (
+          <div
+            className="mt-4 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-50/95 text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-100 px-3 py-2.5 text-xs"
+            role="alert"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" aria-hidden />
+            <span>Could not load saved settings from the server: {agentConfigLoadError}. Showing local defaults until the next successful load.</span>
+          </div>
+        ) : null}
+
+        <div className="flex gap-6 mt-6 border-b border-slate-200 dark:border-gray-800">
           <TabButton id="general" label="General" icon={Settings} active={activeTab === 'general'} onClick={setActiveTab} />
           <TabButton id="knowledge-base" label="Knowledge Base" icon={BookOpen} active={activeTab === 'knowledge-base'} onClick={setActiveTab} />
           <TabButton id="conversation" label="Conversation" icon={MessageSquare} active={activeTab === 'conversation'} onClick={setActiveTab} />
@@ -177,31 +222,32 @@ export default function AgentConfig({ settings, onSettingsChange }) {
       <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
         {activeTab === 'general' && (
           <div className="max-w-3xl space-y-8">
-            <p className="text-xs text-gray-500 -mt-1">
-              Voice, language, and schedule changes save automatically to your workspace when you edit them.
+            <p className="text-xs text-slate-600 dark:text-gray-500 -mt-1">
+              Voice, language, and schedule changes save automatically. Watch the sync status in the page header — if sync
+              fails, your edits are still kept in this browser until the server accepts them.
             </p>
-            <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
-              <h2 className="text-lg font-semibold text-white mb-6">Agent Personalization</h2>
+            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">Agent Personalization</h2>
               
               <div className="space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-2">Agent Name</label>
+                  <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Agent Name</label>
                   <input 
                     type="text" 
                     value={settings.agentName || 'Voice Agent'} 
                     onChange={(e) => handleUpdateSetting('agentName', e.target.value)}
-                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
+                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
                   />
-                  <p className="text-xs text-gray-500 mt-1.5">This name will be used by the agent during introductions.</p>
+                  <p className="text-xs text-slate-600 dark:text-gray-500 mt-1.5">This name will be used by the agent during introductions.</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-sm font-medium text-gray-400 mb-2">Default Language</label>
+                    <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Default Language</label>
                     <select 
                       value={settings.languageMode} 
                       onChange={(e) => handleUpdateSetting('languageMode', e.target.value)}
-                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
                     >
                       <option value="telugu">Telugu</option>
                       <option value="english">English</option>
@@ -210,11 +256,11 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-400 mb-2">Agent Voice</label>
+                    <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Agent Voice</label>
                     <select 
                       value={settings.ttsVoice} 
                       onChange={(e) => handleUpdateSetting('ttsVoice', e.target.value)}
-                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500 capitalize"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white capitalize"
                     >
                       {VOICES.map(v => <option key={v} value={v}>{v}</option>)}
                     </select>
@@ -223,38 +269,38 @@ export default function AgentConfig({ settings, onSettingsChange }) {
               </div>
             </section>
 
-            <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
-              <h2 className="text-lg font-semibold text-white mb-6">Operating Schedule</h2>
+            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">Operating Schedule</h2>
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-2">Operating Days</label>
+                  <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Operating Days</label>
                   <select 
                     value={settings.operatingDays || 'every_day'} 
                     onChange={(e) => handleUpdateSetting('operatingDays', e.target.value)}
-                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
+                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
                   >
                     <option value="every_day">Every day</option>
                     <option value="weekdays">Weekdays Only</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-400 mb-2">Calling Hours</label>
+                  <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Calling Hours</label>
                   <div className="flex items-center gap-2">
                     <input 
                       type="time" 
                       value={settings.operatingStart || '09:00'} 
                       onChange={(e) => handleUpdateSetting('operatingStart', e.target.value)}
-                      className="flex-1 bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
+                      className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
                     />
-                    <span className="text-gray-500">to</span>
+                    <span className="text-slate-500 dark:text-gray-500">to</span>
                     <input 
                       type="time" 
                       value={settings.operatingEnd || '19:00'} 
                       onChange={(e) => handleUpdateSetting('operatingEnd', e.target.value)}
-                      className="flex-1 bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
+                      className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
                     />
                   </div>
-                  <p className="text-xs text-gray-500 mt-1.5">Auto-dialer will only operate within this window.</p>
+                  <p className="text-xs text-slate-600 dark:text-gray-500 mt-1.5">Auto-dialer will only operate within this window.</p>
                 </div>
               </div>
             </section>
@@ -263,15 +309,15 @@ export default function AgentConfig({ settings, onSettingsChange }) {
 
         {activeTab === 'knowledge-base' && (
           <div className="max-w-5xl flex flex-col gap-3 h-[600px]">
-            <p className="text-xs text-gray-500 shrink-0">
-              Company profile uses <span className="text-gray-400">Save Profile</span>. Projects are saved when you create or update them. Without projects, the agent has no inventory to discuss.
+            <p className="text-xs text-slate-600 dark:text-gray-500 shrink-0">
+              Company profile uses <span className="text-slate-800 dark:text-gray-400">Save Profile</span>. Projects are saved when you create or update them. Without projects, the agent has no inventory to discuss.
             </p>
             <div className="flex gap-6 flex-1 min-h-0">
             {/* KB Sidebar */}
-            <div className="w-64 bg-gray-900/50 border border-gray-800/60 rounded-2xl flex flex-col overflow-hidden shrink-0">
+            <div className="w-64 bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl flex flex-col overflow-hidden shrink-0">
               <button
                 onClick={() => setKbPane('company')}
-                className={`w-full text-left px-4 py-4 border-b border-gray-800/60 flex items-center gap-3 transition-colors ${kbPane === 'company' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}
+                className={`w-full text-left px-4 py-4 border-b border-slate-200/90 dark:border-gray-800/60 flex items-center gap-3 transition-colors ${kbPane === 'company' ? 'bg-slate-200 text-slate-900 dark:bg-gray-800 dark:text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-800/50'}`}
               >
                 <FileText className="w-4 h-4" />
                 <span className="font-medium text-sm">Company Profile</span>
@@ -279,7 +325,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
               
               <div className="flex-1 flex flex-col p-4">
                 <div className="flex items-center justify-between mb-4">
-                  <span className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                  <span className="text-sm font-medium text-slate-800 dark:text-gray-300 flex items-center gap-2">
                     <Building className="w-4 h-4" />
                     Projects
                   </span>
@@ -290,7 +336,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                 <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
                   {projects.length === 0 && !kbLoading && (
                     <div className="px-2 py-4 text-center space-y-2">
-                      <p className="text-[11px] text-gray-500 leading-relaxed">No projects in the knowledge base yet.</p>
+                      <p className="text-[11px] text-slate-600 dark:text-gray-500 leading-relaxed">No projects in the knowledge base yet.</p>
                       <button
                         type="button"
                         onClick={() => {
@@ -308,7 +354,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                     <button
                       key={p.id}
                       onClick={() => { setKbPane('projects'); setSelectedId(p.id); setCreating(false); }}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${kbPane === 'projects' && selectedId === p.id && !creating ? 'bg-brand-500/10 text-brand-400' : 'text-gray-400 hover:bg-gray-800'}`}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${kbPane === 'projects' && selectedId === p.id && !creating ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400' : 'text-slate-600 hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-800'}`}
                     >
                       {p.name}
                     </button>
@@ -318,12 +364,12 @@ export default function AgentConfig({ settings, onSettingsChange }) {
             </div>
 
             {/* KB Content */}
-            <div className="flex-1 min-w-0 bg-gray-900/50 border border-gray-800/60 rounded-2xl overflow-hidden shadow-xl flex flex-col">
+            <div className="flex-1 min-w-0 bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl overflow-hidden shadow-xl flex flex-col">
               {kbPane === 'company' ? (
                 <>
-                  <div className="p-4 border-b border-gray-800/60 flex flex-wrap items-center justify-between gap-2 bg-gray-900/50">
+                  <div className="p-4 border-b border-slate-200/90 dark:border-gray-800/60 flex flex-wrap items-center justify-between gap-2 bg-slate-50/90 dark:bg-gray-900/50">
                     <div className="flex items-center gap-2 min-w-0">
-                      <h2 className="text-md font-semibold text-white">Company Profile</h2>
+                      <h2 className="text-md font-semibold text-slate-900 dark:text-white">Company Profile</h2>
                       {companyProfileDirty && (
                         <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/90 shrink-0">
                           Unsaved changes
@@ -341,7 +387,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                   <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                     <div className="space-y-5 max-w-3xl">
                       <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-2">Company Name</label>
+                        <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Company Name</label>
                         <input
                           type="text"
                           value={companyForm.name}
@@ -350,7 +396,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-2">Tagline</label>
+                        <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Tagline</label>
                         <input
                           type="text"
                           value={companyForm.tagline}
@@ -360,7 +406,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                         <div>
-                          <label className="block text-sm font-medium text-gray-400 mb-2">Phone</label>
+                          <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Phone</label>
                           <input
                             type="text"
                             value={companyForm.phone}
@@ -369,7 +415,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                           />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-gray-400 mb-2">Email</label>
+                          <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Email</label>
                           <input
                             type="text"
                             value={companyForm.email}
@@ -380,7 +426,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                         <div>
-                          <label className="block text-sm font-medium text-gray-400 mb-2">Website</label>
+                          <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Website</label>
                           <input
                             type="text"
                             value={companyForm.website}
@@ -389,7 +435,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                           />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-gray-400 mb-2">Facebook URL</label>
+                          <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Facebook URL</label>
                           <input
                             type="text"
                             value={companyForm.socialFacebook}
@@ -399,7 +445,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                         </div>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-2">Head Office Address</label>
+                        <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Head Office Address</label>
                         <textarea
                           rows={2}
                           value={companyForm.headOffice}
@@ -408,7 +454,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-2">Operating Areas</label>
+                        <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Operating Areas</label>
                         <input
                           type="text"
                           placeholder="e.g. Hyderabad, Vizag, Vijayawada"
@@ -416,10 +462,10 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                           onChange={(e) => setCompanyForm((prev) => ({ ...prev, areas: e.target.value }))}
                           className={inputClass}
                         />
-                        <p className="text-xs text-gray-500 mt-1.5">Comma-separated list.</p>
+                        <p className="text-xs text-slate-600 dark:text-gray-500 mt-1.5">Comma-separated list.</p>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-2">Project Types</label>
+                        <label className="block text-sm font-medium text-slate-600 dark:text-gray-400 mb-2">Project Types</label>
                         <input
                           type="text"
                           placeholder="e.g. Plots, Villas, Apartments"
@@ -427,15 +473,15 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                           onChange={(e) => setCompanyForm((prev) => ({ ...prev, projectTypes: e.target.value }))}
                           className={inputClass}
                         />
-                        <p className="text-xs text-gray-500 mt-1.5">Comma-separated list.</p>
+                        <p className="text-xs text-slate-600 dark:text-gray-500 mt-1.5">Comma-separated list.</p>
                       </div>
                     </div>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="p-4 border-b border-gray-800/60 bg-gray-900/50">
-                    <h2 className="text-md font-semibold text-white">
+                  <div className="p-4 border-b border-slate-200/90 dark:border-gray-800/60 bg-slate-50/90 dark:bg-gray-900/50">
+                    <h2 className="text-md font-semibold text-slate-900 dark:text-white">
                       {creating ? 'Create Project' : selectedProject ? `Edit: ${selectedProject.name}` : 'Select a Project'}
                     </h2>
                   </div>
@@ -450,7 +496,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                         locationOptions={[]}
                       />
                     ) : (
-                      <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+                      <div className="h-full flex items-center justify-center text-slate-600 dark:text-gray-500 text-sm">
                         Select a project from the left or create a new one.
                       </div>
                     )}
@@ -464,43 +510,53 @@ export default function AgentConfig({ settings, onSettingsChange }) {
 
         {activeTab === 'conversation' && (
           <div className="max-w-3xl space-y-8">
-            <p className="text-xs text-gray-500 -mt-1">
+            <p className="text-xs text-slate-600 dark:text-gray-500 -mt-1">
               Intro and consent text save automatically to your workspace when you edit them.
             </p>
-            <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
-              <h2 className="text-lg font-semibold text-white mb-2">Introduction Messaging</h2>
-              <p className="text-xs text-gray-400 mb-6">Customize the first message the Agent will say when the call connects. Available placeholders: {'{leadName}'}, {'{agentName}'}, {'{companyName}'}.</p>
-              
+            <ConversationPlaceholderReference />
+            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Introduction Messaging</h2>
+              <p className="text-xs text-slate-600 dark:text-gray-400 mb-6">
+                First spoken line when the call connects. Type any of the tokens from the reference above; they are
+                filled from the active lead, company profile, agent name, and clock (server timezone, default Asia/Kolkata).
+              </p>
+
               <textarea
                 value={settings.introTemplate}
                 onChange={(e) => handleUpdateSetting('introTemplate', e.target.value)}
                 rows={4}
-                className="w-full bg-gray-950 border border-gray-800 rounded-xl p-4 text-sm text-gray-300 focus:outline-none focus:border-brand-500 custom-scrollbar"
+                className="w-full bg-white border border-slate-300 rounded-xl p-4 text-sm text-slate-800 focus:outline-none focus:border-brand-500 custom-scrollbar dark:bg-gray-950 dark:border-gray-800 dark:text-gray-300"
               />
             </section>
 
-            <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
-              <h2 className="text-lg font-semibold text-white mb-2">Voicemail Drop</h2>
-              <p className="text-xs text-gray-400 mb-6">Customize the message the Agent will recite if the call is directed to a voicemail inbox. Available placeholders: {'{leadName}'}, {'{agentName}'}, {'{companyName}'}.</p>
+            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Voicemail Drop</h2>
+              <p className="text-xs text-slate-600 dark:text-gray-400 mb-6">
+                Saved with your workspace. Use the same placeholders as the intro so copy stays consistent when this flow
+                is wired to audio.
+              </p>
               
               <textarea
                 value={settings.voicemailTemplate || 'Hello {leadName}, this is {agentName}. Please call us back at your earliest convenience.'}
                 onChange={(e) => handleUpdateSetting('voicemailTemplate', e.target.value)}
                 rows={3}
-                className="w-full bg-gray-950 border border-gray-800 rounded-xl p-4 text-sm text-gray-300 focus:outline-none focus:border-brand-500 custom-scrollbar"
+                className="w-full bg-white border border-slate-300 rounded-xl p-4 text-sm text-slate-800 focus:outline-none focus:border-brand-500 custom-scrollbar dark:bg-gray-950 dark:border-gray-800 dark:text-gray-300"
               />
             </section>
 
-            <section className="bg-gray-900/50 border border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
-              <h2 className="text-lg font-semibold text-white mb-2">Privacy Consent Messaging</h2>
-              <p className="text-xs text-gray-400 mb-6">Enable a message informing the user that the call is being recorded (required in some jurisdictions).</p>
+            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Privacy Consent Messaging</h2>
+              <p className="text-xs text-slate-600 dark:text-gray-400 mb-6">
+                Enable a recording notice where required. You can personalize it with the same placeholders (e.g. company
+                phone or lead name).
+              </p>
               
               <div className="flex items-start gap-3">
                 <input 
                   type="checkbox" 
                   checked={settings.requireConsent || false}
                   onChange={(e) => handleUpdateSetting('requireConsent', e.target.checked)}
-                  className="mt-1 bg-gray-900 border-gray-700 rounded text-brand-500 focus:ring-brand-500"
+                  className="mt-1 rounded border border-slate-300 bg-white text-brand-500 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900"
                 />
                 <div className="flex-1">
                   <textarea
@@ -508,7 +564,7 @@ export default function AgentConfig({ settings, onSettingsChange }) {
                     onChange={(e) => handleUpdateSetting('consentTemplate', e.target.value)}
                     disabled={!settings.requireConsent}
                     rows={2}
-                    className={`w-full bg-gray-950 border border-gray-800 rounded-xl p-4 text-sm focus:outline-none focus:border-brand-500 transition-colors ${!settings.requireConsent ? 'text-gray-600 opacity-50' : 'text-gray-300'}`}
+                    className={`w-full bg-white border border-slate-300 rounded-xl p-4 text-sm focus:outline-none focus:border-brand-500 transition-colors dark:bg-gray-950 dark:border-gray-800 ${!settings.requireConsent ? 'text-slate-400 opacity-50 dark:text-gray-600' : 'text-slate-800 dark:text-gray-300'}`}
                   />
                 </div>
               </div>
@@ -523,7 +579,9 @@ export default function AgentConfig({ settings, onSettingsChange }) {
           <div
             key={toast.id}
             className={`px-4 py-3 rounded-xl border shadow-xl flex items-center gap-3 animate-slide-up ${
-              toast.tone === 'error' ? 'bg-red-950/90 text-red-200 border-red-800/60' : 'bg-emerald-950/90 text-emerald-200 border-emerald-800/60'
+              toast.tone === 'error'
+                ? 'bg-red-50 text-red-900 border-red-200 dark:bg-red-950/90 dark:text-red-200 dark:border-red-800/60'
+                : 'bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/90 dark:text-emerald-200 dark:border-emerald-800/60'
             }`}
           >
             {toast.tone === 'error' ? <AlertCircle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
@@ -535,12 +593,93 @@ export default function AgentConfig({ settings, onSettingsChange }) {
   );
 }
 
+function WorkspaceSaveStatus({ settingsSaveUi }) {
+  const st = settingsSaveUi?.status || 'idle';
+  if (st === 'idle') return null;
+  if (st === 'syncing') {
+    return (
+      <div className="inline-flex items-center gap-2 rounded-lg border border-amber-300/70 bg-amber-50/95 text-amber-950 dark:border-amber-500/25 dark:bg-amber-950/30 dark:text-amber-100 px-3 py-2 text-xs shrink-0">
+        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden />
+        <span>Syncing…</span>
+      </div>
+    );
+  }
+  if (st === 'saved') {
+    return (
+      <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-300/70 bg-emerald-50/95 text-emerald-950 dark:border-emerald-500/25 dark:bg-emerald-950/30 dark:text-emerald-100 px-3 py-2 text-xs shrink-0">
+        <Check className="w-3.5 h-3.5 shrink-0 text-emerald-400" aria-hidden />
+        <span>Saved to workspace</span>
+      </div>
+    );
+  }
+  if (st === 'error') {
+    return (
+      <div className="inline-flex items-start gap-2 rounded-lg border border-red-300/70 bg-red-50/95 text-red-900 dark:border-red-500/30 dark:bg-red-950/35 dark:text-red-100 max-w-full sm:max-w-sm shrink-0 px-3 py-2 text-xs">
+        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-400" aria-hidden />
+        <span className="min-w-0 break-words">{settingsSaveUi?.errorMessage || 'Sync failed'}</span>
+      </div>
+    );
+  }
+  return null;
+}
+
+function CopyTokenButton({ token }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard.writeText(token).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+      className="shrink-0 p-1 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 border border-transparent hover:border-slate-300 transition-colors dark:text-gray-500 dark:hover:text-brand-300 dark:hover:bg-gray-800/80 dark:hover:border-gray-700"
+      title="Copy token"
+      aria-label={`Copy ${token} to clipboard`}
+    >
+      {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden /> : <Copy className="w-3.5 h-3.5" aria-hidden />}
+    </button>
+  );
+}
+
+function ConversationPlaceholderReference() {
+  return (
+    <details className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl overflow-hidden group [&_summary::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer list-none px-5 py-3.5 text-sm font-medium text-brand-700 hover:bg-slate-50 dark:text-brand-300 dark:hover:bg-gray-900/80 flex items-center justify-between gap-2">
+        <span>Placeholder reference — click to expand</span>
+        <span className="text-slate-500 dark:text-gray-500 text-xs font-normal group-open:hidden">▼</span>
+        <span className="text-slate-500 dark:text-gray-500 text-xs font-normal hidden group-open:inline">▲</span>
+      </summary>
+      <div className="px-5 pb-4 max-h-[min(420px,55vh)] overflow-y-auto custom-scrollbar border-t border-slate-200/90 dark:border-gray-800/50 space-y-5 pt-4">
+        {CONVERSATION_PLACEHOLDER_GROUPS.map((group) => (
+          <div key={group.title}>
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-gray-500 mb-2">{group.title}</h3>
+            <ul className="grid gap-1.5 sm:grid-cols-2">
+              {group.items.map(({ token, hint }) => (
+                <li
+                  key={token}
+                  className="flex items-start gap-1 text-xs bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-200/90 dark:bg-gray-950/80 dark:border-gray-800/40"
+                >
+                  <code className="text-brand-700 dark:text-brand-200 shrink-0 font-mono text-[11px] pt-0.5">{token}</code>
+                  <CopyTokenButton token={token} />
+                  {hint ? <span className="text-slate-600 dark:text-gray-500 flex-1 min-w-0 pt-0.5 leading-snug">{hint}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function TabButton({ id, label, icon: Icon, active, onClick }) {
   return (
     <button
       onClick={() => onClick(id)}
       className={`flex items-center gap-2 pb-4 text-sm font-medium transition-colors border-b-2 ${
-        active ? 'text-brand-400 border-brand-400' : 'text-gray-500 border-transparent hover:text-gray-300'
+        active ? 'text-brand-600 border-brand-600 dark:text-brand-400 dark:border-brand-400' : 'text-slate-500 border-transparent hover:text-slate-800 dark:text-gray-500 dark:hover:text-gray-300'
       }`}
     >
       <Icon className="w-4 h-4" />

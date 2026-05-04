@@ -5,6 +5,7 @@ import { getAuthToken } from '../services/auth';
 
 export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
+  const [socketReady, setSocketReady] = useState(() => Boolean(socket.connected));
   const [turns, setTurns] = useState([]);
   const [errorMsg, setErrorMsg] = useState(null);
   const [closeDetected, setCloseDetected] = useState(false);
@@ -68,6 +69,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     socketRef.current = socket;
 
     const handleConnect = () => {
+      setSocketReady(true);
       if (disconnectWarnTimerRef.current) {
         clearTimeout(disconnectWarnTimerRef.current);
         disconnectWarnTimerRef.current = null;
@@ -77,6 +79,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     };
 
     const handleDisconnect = (reason) => {
+      setSocketReady(false);
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
@@ -102,6 +105,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     };
 
     const handleConnectError = (err) => {
+      setSocketReady(false);
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
@@ -200,6 +204,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     socketRef.current.on('call_summary', handleCallSummary);
     if (getAuthToken()) {
       socketRef.current.connect();
+      setSocketReady(socketRef.current.connected);
     }
 
     return () => {
@@ -434,6 +439,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
 
   return {
     status,
+    socketReady,
     turns,
     errorMsg,
     closeDetected,

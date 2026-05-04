@@ -290,7 +290,20 @@ async function updateCompanyInfo(companyId, payload) {
   return { ...(data.profile || {}), name: data.name };
 }
 
-async function getAgentConfig(companyId) {
+const SETTINGS_CORE_KEYS = new Set([
+  'ttsVoice',
+  'ttsModel',
+  'sttModel',
+  'ttsProvider',
+  'autoEndCall',
+  'languageMode',
+  'agentName',
+  'introTemplate',
+  'language',
+  'tone',
+]);
+
+async function getAgentConfigRow(companyId) {
   assertCompanyId(companyId);
   const supabase = getSupabase();
   const { data, error } = await supabase
@@ -301,13 +314,22 @@ async function getAgentConfig(companyId) {
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return normalizeAgentConfig(data);
+  return data || null;
+}
+
+async function getAgentConfig(companyId) {
+  const row = await getAgentConfigRow(companyId);
+  return normalizeAgentConfig(row);
 }
 
 function normalizeAgentConfig(row) {
   if (!row) return null;
-  const s = row.settings || {};
+  const s = row.settings && typeof row.settings === 'object' ? row.settings : {};
+  const settingsExtras = Object.fromEntries(
+    Object.entries(s).filter(([k]) => !SETTINGS_CORE_KEYS.has(k))
+  );
   return {
+    ...settingsExtras,
     agentName: row.agent_name || s.agentName || 'Voice Agent',
     ttsVoice: s.ttsVoice || 'aditya',
     ttsModel: s.ttsModel || 'bulbul:v3',
@@ -316,7 +338,7 @@ function normalizeAgentConfig(row) {
     autoEndCall: s.autoEndCall !== undefined ? s.autoEndCall : true,
     languageMode: row.language || s.languageMode || 'telugu',
     introTemplate: row.intro_template || s.introTemplate || null,
-    tone: row.tone || null,
+    tone: row.tone || s.tone || null,
   };
 }
 
@@ -329,23 +351,50 @@ async function upsertAgentConfig(companyId, payload) {
     tone: payload.tone || null,
     language: payload.languageMode || 'telugu',
     intro_template: payload.introTemplate || null,
-    settings: {
-      ttsVoice: payload.ttsVoice || 'aditya',
-      ttsModel: payload.ttsModel || 'bulbul:v3',
-      sttModel: payload.sttModel || 'saaras:v3',
-      ttsProvider: payload.ttsProvider || 'sarvam',
-      autoEndCall: payload.autoEndCall !== undefined ? payload.autoEndCall : true,
-      languageMode: payload.languageMode || 'telugu',
-      agentName: payload.agentName || 'Voice Agent',
-      introTemplate: payload.introTemplate || null,
-    },
   };
 
   const { data: existing } = await supabase
     .from('agent_configs')
-    .select('id')
+    .select('id,settings')
     .eq('company_id', companyId)
     .maybeSingle();
+
+  let prevSettings = {};
+  if (existing?.settings && typeof existing.settings === 'object') {
+    prevSettings = existing.settings;
+  }
+
+  const settings = {
+    ...prevSettings,
+    ttsVoice: payload.ttsVoice || prevSettings.ttsVoice || 'aditya',
+    ttsModel: payload.ttsModel || prevSettings.ttsModel || 'bulbul:v3',
+    sttModel: payload.sttModel || prevSettings.sttModel || 'saaras:v3',
+    ttsProvider: payload.ttsProvider || prevSettings.ttsProvider || 'sarvam',
+    autoEndCall:
+      payload.autoEndCall !== undefined
+        ? Boolean(payload.autoEndCall)
+        : prevSettings.autoEndCall !== undefined
+          ? Boolean(prevSettings.autoEndCall)
+          : true,
+    languageMode: payload.languageMode || prevSettings.languageMode || 'telugu',
+    agentName: payload.agentName || prevSettings.agentName || 'Voice Agent',
+    introTemplate:
+      payload.introTemplate !== undefined ? payload.introTemplate : prevSettings.introTemplate,
+  };
+
+  const EXTRA_SETTING_KEYS = [
+    'voicemailTemplate',
+    'consentTemplate',
+    'requireConsent',
+    'operatingDays',
+    'operatingStart',
+    'operatingEnd',
+  ];
+  for (const k of EXTRA_SETTING_KEYS) {
+    if (payload[k] !== undefined) settings[k] = payload[k];
+  }
+
+  row.settings = settings;
 
   let data, error;
   if (existing) {
@@ -359,7 +408,7 @@ async function upsertAgentConfig(companyId, payload) {
     ({ data, error } = await supabase.from('agent_configs').insert(row).select('*').single());
   }
   if (error) throw error;
-  return normalizeAgentConfig(data);
+  return data;
 }
 
 module.exports = {
@@ -377,6 +426,7 @@ module.exports = {
   getCompanyInfo,
   updateCompanyInfo,
   getAgentConfig,
+  getAgentConfigRow,
   upsertAgentConfig,
   upsertLead,
 };

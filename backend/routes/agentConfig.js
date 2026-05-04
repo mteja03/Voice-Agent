@@ -1,5 +1,5 @@
 const express = require('express');
-const { getAgentConfig, upsertAgentConfig } = require('../services/db');
+const { getAgentConfigRow, upsertAgentConfig } = require('../services/db');
 const asyncHandler = require('../utils/asyncHandler');
 const { sendSuccess, sendError } = require('../utils/response');
 
@@ -50,11 +50,11 @@ function agentConfigFromRow(row) {
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const data = await getAgentConfig(req.companyId);
-    if (!data) {
+    const row = await getAgentConfigRow(req.companyId);
+    if (!row) {
       return sendSuccess(res, { agentConfig: DEFAULT_AGENT_CONFIG });
     }
-    return sendSuccess(res, { agentConfig: agentConfigFromRow(data) });
+    return sendSuccess(res, { agentConfig: agentConfigFromRow(row) });
   })
 );
 

@@ -1,17 +1,57 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useVoiceAgent } from './hooks/useVoiceAgent';
 import Sidebar from './components/Sidebar';
-import DashboardHome from './components/DashboardHome';
-import Campaigns from './components/Campaigns';
-import Dialer from './components/Dialer';
-import AgentConfig from './components/AgentConfig';
+import ThemeToggle from './components/ThemeToggle';
+import { Skeleton } from './components/ui/Skeleton';
+
+const DashboardHome = lazy(() => import('./components/DashboardHome'));
+const Campaigns = lazy(() => import('./components/Campaigns'));
+const Dialer = lazy(() => import('./components/Dialer'));
+const AgentConfig = lazy(() => import('./components/AgentConfig'));
 import { login, register, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
 import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
-import { Loader2 } from 'lucide-react';
+import { Building2, Loader2 } from 'lucide-react';
 
 const SESSION_ID = uuidv4();
+
+const APP_TAB_HEADINGS = {
+  dashboard: { title: 'Dashboard', subtitle: 'Performance, calls, and outcomes' },
+  campaigns: { title: 'Campaigns', subtitle: 'Lead lists and imports' },
+  dialer: { title: 'Dialer', subtitle: 'Voice sessions' },
+  'agent-config': { title: 'Agent configuration', subtitle: 'Voice, language, and prompts' },
+};
+
+const headerControl =
+  'h-9 shrink-0 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-400 focus:border-brand-400/80 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder:text-gray-500';
+
+function TabRouteFallback() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overflow-x-hidden bg-slate-100 px-4 py-6 dark:bg-gray-950 sm:px-8 sm:py-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 space-y-3">
+          <Skeleton className="h-9 w-52 max-w-full" />
+          <Skeleton className="h-4 w-full max-w-lg" />
+        </div>
+        <Skeleton className="h-8 w-28 shrink-0" />
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="space-y-3 rounded-2xl border border-slate-200/90 bg-white/90 p-6 dark:border-gray-800/60 dark:bg-gray-900/50"
+          >
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-10 w-20" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ))}
+      </div>
+      <Skeleton className="h-72 w-full max-w-5xl rounded-2xl" />
+    </div>
+  );
+}
 
 const DEFAULT_SETTINGS = {
   agentName: 'Voice Agent',
@@ -28,6 +68,8 @@ const LS_KEYS = {
   settings: 'voice-agent-settings',
   leads: 'voice-agent-leads',
   activeLeadId: 'voice-agent-active-lead-id',
+  campaigns: 'voice-agent-campaigns',
+  activeCampaignId: 'voice-agent-active-campaign-id',
 };
 
 const LEGACY_LS_KEYS = {
@@ -58,18 +100,6 @@ function loadSettings() {
   }
 }
 
-function loadLeads() {
-  try {
-    const saved = localStorage.getItem(LS_KEYS.leads)
-      || localStorage.getItem(LEGACY_LS_KEYS.leads);
-    if (!saved) return [];
-    const parsed = JSON.parse(saved);
-    return normalizeLeadIds(parsed);
-  } catch {
-    return [];
-  }
-}
-
 function loadActiveLeadId() {
   try {
     return localStorage.getItem(LS_KEYS.activeLeadId)
@@ -77,6 +107,67 @@ function loadActiveLeadId() {
   } catch {
     return null;
   }
+}
+
+/** @returns {{ id: string, name: string, createdAt: string, leads: object[] }[]} */
+function loadCampaignsBootstrap() {
+  try {
+    const raw = localStorage.getItem(LS_KEYS.campaigns);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.map((c) => ({
+          id: String(c.id || uuidv4()),
+          name: typeof c.name === 'string' && c.name.trim() ? c.name.trim() : 'Campaign',
+          createdAt: typeof c.createdAt === 'string' ? c.createdAt : new Date().toISOString(),
+          leads: normalizeLeadIds(Array.isArray(c.leads) ? c.leads : []),
+        }));
+      }
+    }
+    const flat =
+      localStorage.getItem(LS_KEYS.leads) || localStorage.getItem(LEGACY_LS_KEYS.leads);
+    if (flat) {
+      const leads = normalizeLeadIds(JSON.parse(flat));
+      const id = uuidv4();
+      const migrated = [
+        {
+          id,
+          name: 'Imported list',
+          createdAt: new Date().toISOString(),
+          leads,
+        },
+      ];
+      try {
+        localStorage.setItem(LS_KEYS.campaigns, JSON.stringify(migrated));
+        localStorage.removeItem(LS_KEYS.leads);
+        localStorage.removeItem(LEGACY_LS_KEYS.leads);
+      } catch {
+        // ignore
+      }
+      return migrated;
+    }
+  } catch {
+    // fall through
+  }
+  const id = uuidv4();
+  return [
+    {
+      id,
+      name: 'My first campaign',
+      createdAt: new Date().toISOString(),
+      leads: [],
+    },
+  ];
+}
+
+function loadInitialActiveCampaignId(campaigns) {
+  try {
+    const saved = localStorage.getItem(LS_KEYS.activeCampaignId);
+    if (saved && campaigns.some((c) => c.id === saved)) return saved;
+  } catch {
+    // ignore
+  }
+  return campaigns[0]?.id || '';
 }
 
 function normalizeLeadIds(leads) {
@@ -101,12 +192,14 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [settings, setSettings] = useState(loadSettings);
-  const [leads, setLeads] = useState(loadLeads);
-  const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
   const [tenants, setTenants] = useState([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
   const [tenantActionError, setTenantActionError] = useState('');
   const [newTenantName, setNewTenantName] = useState('');
+  const [settingsSaveUi, setSettingsSaveUi] = useState({ status: 'idle', errorMessage: '' });
+  const [agentConfigLoadError, setAgentConfigLoadError] = useState('');
+  const settingsSaveDebounceRef = useRef(null);
+  const settingsSaveSeqRef = useRef(0);
 
   useEffect(() => {
     const onSessionInvalid = () => {
@@ -117,13 +210,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // One-time migration from legacy sb-* keys.
+    // One-time migration from legacy sb-* keys (settings / active lead only; leads live under campaigns).
     try {
       if (!localStorage.getItem(LS_KEYS.settings)) {
         const legacySettings = localStorage.getItem(LEGACY_LS_KEYS.settings);
         if (legacySettings) localStorage.setItem(LS_KEYS.settings, legacySettings);
       }
-      if (!localStorage.getItem(LS_KEYS.leads)) {
+      if (!localStorage.getItem(LS_KEYS.campaigns) && !localStorage.getItem(LS_KEYS.leads)) {
         const legacyLeads = localStorage.getItem(LEGACY_LS_KEYS.leads);
         if (legacyLeads) localStorage.setItem(LS_KEYS.leads, legacyLeads);
       }
@@ -135,11 +228,37 @@ export default function App() {
       // Ignore storage errors (private mode, blocked storage, etc.)
     }
   }, []);
-  
+
+  const initialCampaigns = useMemo(() => loadCampaignsBootstrap(), []);
+  const [campaigns, setCampaigns] = useState(() => initialCampaigns);
+  const [activeCampaignId, setActiveCampaignId] = useState(() =>
+    loadInitialActiveCampaignId(initialCampaigns)
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_KEYS.campaigns, JSON.stringify(campaigns));
+      localStorage.setItem(LS_KEYS.activeCampaignId, activeCampaignId);
+    } catch {
+      // ignore
+    }
+  }, [campaigns, activeCampaignId]);
+
+  const activeCampaign = useMemo(() => {
+    const c = campaigns.find((x) => x.id === activeCampaignId);
+    return c || campaigns[0];
+  }, [campaigns, activeCampaignId]);
+
+  const leads = activeCampaign?.leads ?? [];
+  const allLeadsFlat = useMemo(() => campaigns.flatMap((c) => c.leads), [campaigns]);
+
+  const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
+
   const activeLead = leads.find((lead) => lead.id === activeLeadId) || null;
 
   const {
     status,
+    socketReady,
     turns,
     errorMsg,
     closeDetected,
@@ -157,6 +276,18 @@ export default function App() {
   } = useVoiceAgent(SESSION_ID, settings, activeLead);
 
   useEffect(() => {
+    if (activeLeadId && !leads.some((l) => l.id === activeLeadId)) {
+      clearSession();
+      setActiveLeadId(null);
+      try {
+        localStorage.removeItem(LS_KEYS.activeLeadId);
+      } catch {
+        // ignore
+      }
+    }
+  }, [leads, activeLeadId, clearSession]);
+
+  useEffect(() => {
     if (!authUser?.isMasterAdmin) {
       setTenants([]);
       return;
@@ -171,32 +302,149 @@ export default function App() {
 
   useEffect(() => {
     if (!authUser) return;
+    setAgentConfigLoadError('');
     fetchAgentConfig()
       .then((config) => {
         if (config) {
           setSettings((prev) => ({ ...DEFAULT_SETTINGS, ...prev, ...config }));
         }
       })
-      .catch((err) => console.warn('Failed to load agent config:', err.message));
+      .catch((err) => {
+        const msg = err.message || 'Failed to load workspace settings';
+        setAgentConfigLoadError(msg);
+        console.warn('Failed to load agent config:', msg);
+      });
   }, [authUser?.activeCompanyId]);
 
   const handleTabChange = useCallback((tabId) => {
     setActiveTab(tabId);
   }, []);
 
+  const prefetchTab = useCallback((tabId) => {
+    const loaders = {
+      dashboard: () => import('./components/DashboardHome'),
+      campaigns: () => import('./components/Campaigns'),
+      dialer: () => import('./components/Dialer'),
+      'agent-config': () => import('./components/AgentConfig'),
+    };
+    const fn = loaders[tabId];
+    if (fn) fn().catch(() => {});
+  }, []);
+
   const handleSettingsChange = useCallback((next) => {
     setSettings(next);
     localStorage.setItem(LS_KEYS.settings, JSON.stringify(next));
-    saveAgentConfig(next).catch((err) =>
-      console.warn('Failed to save agent config:', err.message)
-    );
+    setSettingsSaveUi({ status: 'syncing', errorMessage: '' });
+    if (settingsSaveDebounceRef.current) {
+      clearTimeout(settingsSaveDebounceRef.current);
+    }
+    settingsSaveDebounceRef.current = setTimeout(() => {
+      const seq = (settingsSaveSeqRef.current += 1);
+      saveAgentConfig(next)
+        .then(() => {
+          if (seq !== settingsSaveSeqRef.current) return;
+          setSettingsSaveUi({ status: 'saved', errorMessage: '' });
+          setTimeout(() => {
+            if (seq === settingsSaveSeqRef.current) {
+              setSettingsSaveUi((u) => (u.status === 'saved' ? { status: 'idle', errorMessage: '' } : u));
+            }
+          }, 2200);
+        })
+        .catch((err) => {
+          if (seq !== settingsSaveSeqRef.current) return;
+          const errorMessage =
+            err.message ||
+            'Could not sync to the server. This device still has your latest edits in local storage.';
+          setSettingsSaveUi({ status: 'error', errorMessage });
+          console.warn('Failed to save agent config:', errorMessage);
+        });
+    }, 450);
   }, []);
 
   const handleLeadsChange = useCallback((nextLeads) => {
     const normalized = normalizeLeadIds(nextLeads);
-    setLeads(normalized);
-    localStorage.setItem(LS_KEYS.leads, JSON.stringify(normalized));
+    setCampaigns((prev) =>
+      prev.map((c) => (c.id === activeCampaignId ? { ...c, leads: normalized } : c))
+    );
+  }, [activeCampaignId]);
+
+  const handleActiveCampaignChange = useCallback(
+    (nextId) => {
+      if (!nextId || !campaigns.some((c) => c.id === nextId)) return;
+      if (nextId === activeCampaignId) return;
+      clearSession();
+      setActiveLeadId(null);
+      try {
+        localStorage.removeItem(LS_KEYS.activeLeadId);
+      } catch {
+        // ignore
+      }
+      setActiveCampaignId(nextId);
+    },
+    [campaigns, activeCampaignId, clearSession]
+  );
+
+  const handleCreateCampaign = useCallback((name) => {
+    const id = uuidv4();
+    const trimmed = (name || '').trim();
+    setCampaigns((prev) => [
+      ...prev,
+      {
+        id,
+        name: trimmed || `Campaign ${prev.length + 1}`,
+        createdAt: new Date().toISOString(),
+        leads: [],
+      },
+    ]);
+    setActiveCampaignId(id);
+    clearSession();
+    setActiveLeadId(null);
+    try {
+      localStorage.removeItem(LS_KEYS.activeLeadId);
+    } catch {
+      // ignore
+    }
+  }, [clearSession]);
+
+  const handleRenameCampaign = useCallback((campaignId, nextName) => {
+    const t = (nextName || '').trim();
+    if (!t) return;
+    setCampaigns((prev) => prev.map((c) => (c.id === campaignId ? { ...c, name: t } : c)));
   }, []);
+
+  const handleDeleteCampaign = useCallback(
+    (campaignId) => {
+      if (campaigns.length <= 1) return;
+      const victim = campaigns.find((c) => c.id === campaignId);
+      if (!victim) return;
+      if (
+        !window.confirm(
+          `Delete campaign "${victim.name}" and all of its leads? This cannot be undone.`
+        )
+      ) {
+        return;
+      }
+      const next = campaigns.filter((c) => c.id !== campaignId);
+      setCampaigns(next);
+      if (activeCampaignId === campaignId) {
+        setActiveCampaignId(next[0].id);
+        clearSession();
+        setActiveLeadId(null);
+        try {
+          localStorage.removeItem(LS_KEYS.activeLeadId);
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [campaigns, activeCampaignId, clearSession]
+  );
+
+  useEffect(() => {
+    if (campaigns.length > 0 && !campaigns.some((c) => c.id === activeCampaignId)) {
+      setActiveCampaignId(campaigns[0].id);
+    }
+  }, [campaigns, activeCampaignId]);
 
   const handleActiveLeadChange = useCallback((nextLead) => {
     const nextId = nextLead?.id || null;
@@ -276,109 +524,162 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-black overflow-hidden font-sans antialiased text-gray-200">
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
+    <div className="motion-safe:transition-colors motion-safe:duration-200 flex h-screen w-full overflow-hidden bg-slate-100 font-sans antialiased text-slate-900 dark:bg-black dark:text-gray-200">
+      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onTabHover={prefetchTab} />
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header
-          className="flex-shrink-0 flex flex-wrap items-center justify-end gap-x-2 gap-y-2 px-4 py-2.5 border-b border-gray-800/60 bg-gray-950/95 backdrop-blur-sm z-30"
-          aria-label="Account and workspace"
+          className="z-30 flex h-16 shrink-0 items-center gap-3 border-b border-slate-200/90 bg-white/95 px-4 backdrop-blur-sm dark:border-gray-800/60 dark:bg-gray-950/95 sm:gap-5 sm:px-6"
+          aria-label="Workspace and account"
         >
-          {authUser?.isMasterAdmin && (
-            <>
-              <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wider hidden md:inline shrink-0">
-                Organization
-              </span>
-              <select
-                className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 min-w-[160px] max-w-[220px] shrink-0 min-h-[44px] sm:min-h-0"
-                value={authUser.activeCompanyId || ''}
-                onChange={(e) => handleTenantSwitch(e.target.value)}
-                disabled={tenantsLoading}
-                aria-busy={tenantsLoading}
-                title="Switch organization"
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="truncate text-[15px] font-semibold tracking-tight text-slate-900 dark:text-white">
+              {(APP_TAB_HEADINGS[activeTab] || APP_TAB_HEADINGS.dashboard).title}
+            </p>
+            <p className="truncate text-xs text-slate-500 dark:text-gray-500">
+              {(APP_TAB_HEADINGS[activeTab] || APP_TAB_HEADINGS.dashboard).subtitle}
+            </p>
+          </div>
+
+          <div className="flex min-w-0 shrink-0 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] motion-safe:scroll-smooth sm:gap-3 md:overflow-visible [&::-webkit-scrollbar]:hidden">
+            {authUser?.isMasterAdmin && (
+              <div
+                className="flex shrink-0 items-center gap-2 rounded-xl border border-slate-200/90 bg-slate-50/95 py-1 pl-2 pr-1.5 dark:border-gray-700/80 dark:bg-gray-900/50 sm:gap-2.5 sm:pl-3"
+                role="group"
+                aria-label="Workspace"
               >
-                <option value="" disabled>
-                  {tenantsLoading ? 'Loading organizations...' : 'Select organization'}
-                </option>
-                {tenants.map((tenant) => (
-                  <option key={tenant.id} value={tenant.id}>
-                    {tenant.name}
+                <div className="hidden items-center gap-1.5 text-slate-600 dark:text-gray-400 sm:flex" title="Active organization">
+                  <Building2 className="h-3.5 w-3.5 shrink-0 text-brand-500 dark:text-brand-400" aria-hidden />
+                  <span className="max-w-[7rem] truncate text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-gray-400">
+                    Workspace
+                  </span>
+                </div>
+                <select
+                  className={`${headerControl} w-[min(200px,42vw)] min-w-[8.5rem] max-w-[220px] sm:w-44`}
+                  value={authUser.activeCompanyId || ''}
+                  onChange={(e) => handleTenantSwitch(e.target.value)}
+                  disabled={tenantsLoading}
+                  aria-busy={tenantsLoading}
+                  aria-label="Switch organization"
+                  title="Switch organization"
+                >
+                  <option value="" disabled>
+                    {tenantsLoading ? 'Loading…' : 'Select organization'}
                   </option>
-                ))}
-              </select>
-              <input
-                value={newTenantName}
-                onChange={(e) => setNewTenantName(e.target.value)}
-                placeholder="New organization"
-                className="text-xs px-2 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 w-36 min-w-0 sm:w-40 shrink min-h-[44px] sm:min-h-0"
-                aria-label="New organization name"
-              />
+                  {tenants.map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={newTenantName}
+                  onChange={(e) => setNewTenantName(e.target.value)}
+                  placeholder="New org"
+                  className={`${headerControl} w-[5.5rem] min-w-0 sm:w-32 md:w-36`}
+                  aria-label="New organization name"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateTenant}
+                  disabled={tenantsLoading || !newTenantName.trim()}
+                  className="h-9 shrink-0 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-brand-500 disabled:pointer-events-none disabled:opacity-45 dark:shadow-brand-900/20"
+                >
+                  Create
+                </button>
+              </div>
+            )}
+
+            {authUser?.isMasterAdmin && tenantsLoading && (
+              <span
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2 py-1 text-[11px] text-slate-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+                aria-live="polite"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-500" aria-hidden />
+                <span className="hidden sm:inline">Working…</span>
+              </span>
+            )}
+
+            {authUser?.isMasterAdmin && (
+              <span className="hidden h-7 w-px shrink-0 bg-slate-200 dark:bg-gray-700 sm:block" aria-hidden />
+            )}
+
+            <div className="flex shrink-0 items-center gap-2">
+              <ThemeToggle />
               <button
                 type="button"
-                onClick={handleCreateTenant}
-                disabled={tenantsLoading || !newTenantName.trim()}
-                className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 disabled:opacity-60 shrink-0 min-h-[44px] sm:min-h-0"
+                onClick={handleLogout}
+                className="h-9 shrink-0 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
               >
-                Create
+                Logout
               </button>
-            </>
-          )}
-          {authUser?.isMasterAdmin && tenantsLoading && (
-            <span className="flex items-center gap-1.5 text-[11px] text-gray-500 shrink-0" aria-live="polite">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" aria-hidden />
-              Working…
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 shrink-0 min-h-[44px] sm:min-h-0"
-          >
-            Logout
-          </button>
+            </div>
+          </div>
         </header>
         {tenantActionError && (
-          <div className="flex-shrink-0 px-4 py-2 text-xs text-red-300 bg-red-950/40 border-b border-red-900/40">
+          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-300">
             {tenantActionError}
           </div>
         )}
 
-        <main className="flex-1 relative flex flex-col min-w-0 overflow-hidden">
-          {activeTab === 'dashboard' && <DashboardHome leads={leads} />}
-          {activeTab === 'campaigns' && (
-            <Campaigns
-              leads={leads}
-              activeLead={activeLead}
-              onLeadsChange={handleLeadsChange}
-              onActiveLeadChange={handleActiveLeadChange}
-              onNavigateToDialer={() => setActiveTab('dialer')}
-            />
-          )}
-          {activeTab === 'dialer' && (
-            <Dialer
-              status={status}
-              turns={turns}
-              errorMsg={errorMsg}
-              closeDetected={closeDetected}
-              vadLoading={vadLoading}
-              vadError={vadError}
-              isVadListening={isVadListening}
-              startVad={startVad}
-              pauseVad={pauseVad}
-              endCall={endCall}
-              retryIntro={retryIntro}
-              activeLead={activeLead}
-              leads={leads}
-              handleNextLeadQuick={handleNextLeadQuick}
-              settings={settings}
-              summaryNote={callNotice}
-              lastCallSummary={lastCallSummary}
-              onRetryConnection={retryConnection}
-            />
-          )}
-          {activeTab === 'agent-config' && (
-            <AgentConfig settings={settings} onSettingsChange={handleSettingsChange} />
-          )}
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <Suspense fallback={<TabRouteFallback />}>
+            {activeTab === 'dashboard' && (
+              <DashboardHome
+                leads={allLeadsFlat}
+                activeCampaignName={activeCampaign?.name}
+                onNavigateCampaigns={() => setActiveTab('campaigns')}
+                onNavigateDialer={() => setActiveTab('dialer')}
+              />
+            )}
+            {activeTab === 'campaigns' && (
+              <Campaigns
+                campaigns={campaigns}
+                activeCampaignId={activeCampaignId}
+                onActiveCampaignChange={handleActiveCampaignChange}
+                onCreateCampaign={handleCreateCampaign}
+                onRenameCampaign={handleRenameCampaign}
+                onDeleteCampaign={handleDeleteCampaign}
+                leads={leads}
+                activeLead={activeLead}
+                onLeadsChange={handleLeadsChange}
+                onActiveLeadChange={handleActiveLeadChange}
+                onNavigateToDialer={() => setActiveTab('dialer')}
+              />
+            )}
+            {activeTab === 'dialer' && (
+              <Dialer
+                status={status}
+                socketReady={socketReady}
+                turns={turns}
+                errorMsg={errorMsg}
+                closeDetected={closeDetected}
+                vadLoading={vadLoading}
+                vadError={vadError}
+                isVadListening={isVadListening}
+                startVad={startVad}
+                pauseVad={pauseVad}
+                endCall={endCall}
+                retryIntro={retryIntro}
+                activeLead={activeLead}
+                leads={leads}
+                handleNextLeadQuick={handleNextLeadQuick}
+                settings={settings}
+                summaryNote={callNotice}
+                lastCallSummary={lastCallSummary}
+                onRetryConnection={retryConnection}
+                onOpenCampaigns={() => setActiveTab('campaigns')}
+              />
+            )}
+            {activeTab === 'agent-config' && (
+              <AgentConfig
+                settings={settings}
+                onSettingsChange={handleSettingsChange}
+                settingsSaveUi={settingsSaveUi}
+                agentConfigLoadError={agentConfigLoadError}
+              />
+            )}
+          </Suspense>
         </main>
       </div>
     </div>
@@ -392,10 +693,13 @@ function AuthScreen({ onSubmit, loading, error }) {
   const [companyName, setCompanyName] = useState('Voice Agent Company');
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-200 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
-        <h1 className="text-2xl font-semibold text-white mb-1">Voice Agent Login</h1>
-        <p className="text-sm text-gray-400 mb-6">
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-slate-900 dark:bg-gray-950 dark:text-gray-200">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-gray-800 dark:bg-gray-900">
+        <div className="mb-4 flex justify-end">
+          <ThemeToggle />
+        </div>
+        <h1 className="mb-1 text-2xl font-semibold text-slate-900 dark:text-white">Voice Agent Login</h1>
+        <p className="mb-6 text-sm text-slate-600 dark:text-gray-400">
           {mode === 'register' ? 'Create your tenant account' : 'Sign in to your tenant workspace'}
         </p>
         <form
@@ -406,7 +710,7 @@ function AuthScreen({ onSubmit, loading, error }) {
           }}
         >
           <input
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             placeholder="Email"
             type="email"
             value={email}
@@ -414,7 +718,7 @@ function AuthScreen({ onSubmit, loading, error }) {
             required
           />
           <input
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             placeholder="Password (min 6 chars)"
             type="password"
             value={password}
@@ -424,7 +728,7 @@ function AuthScreen({ onSubmit, loading, error }) {
           />
           {mode === 'register' && (
             <input
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
               placeholder="Company Name"
               type="text"
               value={companyName}
@@ -432,17 +736,17 @@ function AuthScreen({ onSubmit, loading, error }) {
               required
             />
           )}
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <button
             disabled={loading}
-            className="w-full bg-brand-500 hover:bg-brand-400 text-black font-medium rounded-lg py-2 disabled:opacity-60"
+            className="w-full rounded-lg bg-brand-500 py-2 font-medium text-black hover:bg-brand-400 disabled:opacity-60"
             type="submit"
           >
             {loading ? 'Please wait...' : mode === 'register' ? 'Register' : 'Login'}
           </button>
         </form>
         <button
-          className="mt-4 text-sm text-gray-400 hover:text-gray-200"
+          className="mt-4 text-sm text-slate-600 hover:text-slate-900 dark:text-gray-400 dark:hover:text-gray-200"
           onClick={() => setMode((m) => (m === 'login' ? 'register' : 'login'))}
         >
           {mode === 'login' ? 'New tenant? Register' : 'Have an account? Login'}

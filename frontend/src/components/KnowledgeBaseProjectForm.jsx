@@ -89,7 +89,7 @@ export default function KnowledgeBaseProjectForm({
       <TextArea label="Offer" value={form.offer} onChange={(v) => setField('offer', v)} />
       <Input label="Amenities (comma separated)" value={form.amenitiesText} onChange={(v) => setField('amenitiesText', v)} />
       <Input label="Keywords (comma separated)" value={form.keywordsText} onChange={(v) => setField('keywordsText', v)} />
-      <label className="text-xs text-gray-300 flex items-center gap-2">
+      <label className="text-xs text-slate-700 dark:text-gray-300 flex items-center gap-2">
         <input
           type="checkbox"
           checked={Boolean(form.siteVisitAvailable)}
@@ -98,7 +98,7 @@ export default function KnowledgeBaseProjectForm({
         Site visit available
       </label>
       <div className="flex justify-end gap-2 pt-2">
-        <button type="button" onClick={onCancel} className="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-100">Cancel</button>
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 text-xs rounded bg-slate-200 text-slate-800 hover:bg-slate-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600">Cancel</button>
         <button type="submit" className="px-3 py-1.5 text-xs rounded bg-brand-600 text-white">{submitLabel}</button>
       </div>
     </form>
@@ -109,14 +109,14 @@ function Input({ label, value, onChange, required = false, options = [], error =
   const datalistId = options.length ? `suggest-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
   return (
     <label className="block">
-      <span className="text-[11px] text-gray-400">{label}</span>
+      <span className="text-[11px] text-slate-600 dark:text-gray-400">{label}</span>
       <input
         required={required}
         list={datalistId || undefined}
         value={value || ''}
         onChange={(e) => onChange(e.target.value)}
-        className={`mt-1 w-full bg-gray-800 border rounded px-2 py-1.5 text-sm text-white ${
-          error ? 'border-red-600' : 'border-gray-700'
+        className={`mt-1 w-full rounded border bg-white px-2 py-1.5 text-sm text-slate-900 dark:bg-gray-800 dark:text-white ${
+          error ? 'border-red-600' : 'border-slate-300 dark:border-gray-700'
         }`}
       />
       {options.length > 0 && (
@@ -134,13 +134,13 @@ function Input({ label, value, onChange, required = false, options = [], error =
 function TextArea({ label, value, onChange, error = '' }) {
   return (
     <label className="block">
-      <span className="text-[11px] text-gray-400">{label}</span>
+      <span className="text-[11px] text-slate-600 dark:text-gray-400">{label}</span>
       <textarea
         value={value || ''}
         onChange={(e) => onChange(e.target.value)}
         rows={3}
-        className={`mt-1 w-full bg-gray-800 border rounded px-2 py-1.5 text-sm text-white ${
-          error ? 'border-red-600' : 'border-gray-700'
+        className={`mt-1 w-full rounded border bg-white px-2 py-1.5 text-sm text-slate-900 dark:bg-gray-800 dark:text-white ${
+          error ? 'border-red-600' : 'border-slate-300 dark:border-gray-700'
         }`}
       />
       {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}

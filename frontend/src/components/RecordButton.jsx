@@ -1,16 +1,24 @@
-export default function RecordButton({ status, isVadListening, startVad, pauseVad }) {
+export default function RecordButton({ status, isVadListening, socketReady = true, startVad, pauseVad }) {
   const isListening = status === 'listening';
   const isProcessing = status === 'processing';
   const isSpeaking = status === 'speaking';
-  
-  const label = !isVadListening ? 'Start voice assistant'
-    : isSpeaking ? 'Speaking...' 
-    : isProcessing ? 'Processing...' 
-    : isListening ? 'Listening...' 
-    : 'Assistant is active';
+  const blockedStart = !socketReady && !isVadListening;
+
+  const label = blockedStart
+    ? 'Waiting for server…'
+    : !isVadListening
+      ? 'Start voice assistant'
+      : isSpeaking
+        ? 'Speaking...'
+        : isProcessing
+          ? 'Processing...'
+          : isListening
+            ? 'Listening...'
+            : 'Assistant is active';
 
   const handleClick = () => {
     if (!isVadListening) {
+      if (!socketReady) return;
       startVad();
     } else {
       pauseVad();
@@ -29,18 +37,20 @@ export default function RecordButton({ status, isVadListening, startVad, pauseVa
 
         <button
           onClick={handleClick}
+          disabled={blockedStart}
           aria-label={isVadListening ? 'Stop voice assistant' : 'Start voice assistant'}
           aria-pressed={isVadListening}
           className={`
             relative w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center
-            transition-all duration-200 ease-out select-none touch-none cursor-pointer ring-offset-2 ring-offset-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400
-            ${!isVadListening
+            transition-all duration-200 ease-out select-none touch-none ring-offset-2 ring-offset-slate-100 dark:ring-offset-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400
+            ${blockedStart ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+            ${!isVadListening && !blockedStart
               ? 'bg-slate-700 hover:bg-slate-600 shadow-lg hover:scale-[1.02]'
               : isProcessing
-              ? 'bg-gray-800 opacity-80'
+              ? 'bg-slate-300 dark:bg-gray-800 opacity-80'
               : isListening
-              ? 'bg-slate-500 scale-110 shadow-xl shadow-slate-900/60'
-              : 'bg-slate-300 shadow-lg shadow-slate-900/50 hover:brightness-110'
+              ? 'bg-slate-500 scale-110 shadow-xl shadow-slate-900/40 dark:shadow-slate-900/60'
+              : 'bg-slate-200 dark:bg-slate-300 shadow-lg shadow-slate-400/40 dark:shadow-slate-900/50 hover:brightness-110'
             }
           `}
         >
@@ -67,10 +77,9 @@ export default function RecordButton({ status, isVadListening, startVad, pauseVa
         </button>
       </div>
 
-      <p className="text-sm text-gray-300 text-center">{label}</p>
-      <p className="text-[11px] text-gray-500 -mt-3 max-w-xs text-center leading-relaxed">
-        Same as <span className="text-gray-400">Start</span> / <span className="text-gray-400">Pause</span> above — use whichever you prefer.
-        Tap once to start listening, tap again to pause.
+      <p className="text-sm text-slate-700 dark:text-gray-300 text-center">{label}</p>
+      <p className="text-[11px] text-slate-600 dark:text-gray-500 -mt-3 max-w-xs text-center leading-relaxed">
+        Tap once to start listening and play the intro; tap again to pause the microphone.
       </p>
     </div>
   );

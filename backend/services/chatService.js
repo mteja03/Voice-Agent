@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const { getRelevantProjectInfo, getCompanyInfo } = require('./knowledgeBase');
+const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./templatePlaceholders');
 const { saveMessage, getRecentMessages, getSessionMessages, clearSessionDb, getAgentConfig } = require('./db');
 const { safeClientMessage } = require('../utils/sanitize');
 const { logger } = require('../utils/logger');
@@ -222,19 +223,15 @@ async function generateResponse(transcript, sessionId, companyId, leadContext = 
  * Generates an initial assistant-led intro for a new lead.
  */
 async function generateLeadIntroStream(companyId, sessionId, leadContext, introTemplate, languageMode, agentName) {
-  const leadName = leadContext?.name ? `${leadContext.name}` : 'కస్టమర్';
+  const displayLeadName = leadContext?.name ? `${leadContext.name}` : DEFAULT_LEAD_NAME;
   const cleanTemplate = (introTemplate || '').trim();
   const safeAgentName = agentName || 'Voice Agent';
   const companyInfo = await getCompanyInfo(companyId);
-  const safeCompanyName = companyInfo?.name || safeAgentName;
   const renderedIntro = cleanTemplate
-    ? cleanTemplate
-      .replaceAll('{leadName}', leadName)
-      .replaceAll('{agentName}', safeAgentName)
-      .replaceAll('{companyName}', safeCompanyName)
-    : `హలో ${leadName} గారు, నేను ${safeAgentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?`;
+    ? renderConversationTemplate(cleanTemplate, { lead: leadContext, companyInfo, agentName: safeAgentName })
+    : `హలో ${displayLeadName} గారు, నేను ${safeAgentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?`;
 
-  const introSeed = `This is a new outbound sales call. The lead's name is ${leadName}. Start the conversation by saying exactly this opening line: "${renderedIntro}". Do not add anything else to this first message. Wait for the user to confirm their availability before moving to Step 2 (Discovery).`;
+  const introSeed = `This is a new outbound sales call. The lead's name is ${displayLeadName}. Start the conversation by saying exactly this opening line: "${renderedIntro}". Do not add anything else to this first message. Wait for the user to confirm their availability before moving to Step 2 (Discovery).`;
   return createResponseStream(introSeed, sessionId, companyId, leadContext, languageMode, agentName);
 }
 

@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // Explicit attribute avoids mismatches with `class="dark"` across Tailwind 3.4 builds.
+  darkMode: ['selector', '[data-theme="dark"]'],
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {

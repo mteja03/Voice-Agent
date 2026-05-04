@@ -43,6 +43,7 @@ const { errorHandler: expressErrorHandler, notFoundHandler } = require('./utils/
 const { emitSocketError } = require('./utils/socketEmit');
 const { verifyUserContext, loadVerifiedUserContext } = require('./middleware/verifyUserContext');
 const { getCompanyInfo } = require('./services/knowledgeBase');
+const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./services/templatePlaceholders');
 const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech } = require('./services/ttsService');
@@ -322,17 +323,14 @@ function isLowSignalTranscript(text = '') {
 }
 
 async function renderIntroMessage(companyId, lead, introTemplate, agentName) {
-  const leadName = lead?.name ? `${lead.name}` : 'కస్టమర్';
-  const safeAgentName = agentName || 'Voice Agent';
   const companyInfo = await getCompanyInfo(companyId);
-  const safeCompanyName = companyInfo?.name || safeAgentName;
   const template = (introTemplate || '').trim();
-  return template
-    ? template
-      .replaceAll('{leadName}', leadName)
-      .replaceAll('{agentName}', safeAgentName)
-      .replaceAll('{companyName}', safeCompanyName)
-    : `హలో ${leadName} గారు, నేను ${safeAgentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?`;
+  const leadName = lead?.name ? `${lead.name}` : DEFAULT_LEAD_NAME;
+  const safeAgentName = agentName || 'Voice Agent';
+  if (!template) {
+    return `హలో ${leadName} గారు, నేను ${safeAgentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?`;
+  }
+  return renderConversationTemplate(template, { lead, companyInfo, agentName: safeAgentName });
 }
 
 io.on('connection', (socket) => {
