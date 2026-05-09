@@ -58,8 +58,8 @@ export default function Dialer({
 
   if (!hasLead) {
     return (
-      <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-100 dark:bg-gray-950">
-        <header className="flex-shrink-0 px-6 sm:px-8 py-6 border-b border-slate-200/80 dark:border-gray-800/60 bg-white/70 backdrop-blur dark:bg-gray-900/30">
+      <div className="flex-1 flex flex-col h-full min-h-0 bg-transparent">
+        <header className="flex-shrink-0 px-6 sm:px-8 py-6 border-b border-white/10 dark:border-white/5 animate-slide-up" style={{ animationDelay: '300ms' }}>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Active Call</h1>
           <p className="text-sm text-slate-600 dark:text-gray-400 mt-1">Choose someone to call from your campaign list.</p>
         </header>
@@ -89,7 +89,7 @@ export default function Dialer({
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-100 dark:bg-gray-950">
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-transparent">
       {endConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
           <button
@@ -102,7 +102,7 @@ export default function Dialer({
             role="dialog"
             aria-modal="true"
             aria-labelledby="end-call-title"
-            className="relative z-10 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+            className="surface-card relative z-10 w-full max-w-md p-6 shadow-2xl"
           >
             <h2 id="end-call-title" className="text-lg font-semibold text-slate-900 dark:text-white">
               End this call?
@@ -131,7 +131,7 @@ export default function Dialer({
         </div>
       )}
 
-      <header className="flex-shrink-0 px-6 sm:px-8 py-6 border-b border-slate-200/80 dark:border-gray-800/60 bg-white/70 backdrop-blur dark:bg-gray-900/30 flex items-center justify-between gap-4">
+      <header className="flex-shrink-0 px-6 sm:px-8 py-6 border-b border-white/10 dark:border-white/5 flex items-center justify-between gap-4 animate-slide-up" style={{ animationDelay: '300ms' }}>
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Active Call</h1>
           <p className="text-sm text-slate-600 dark:text-gray-400 mt-1">
@@ -159,7 +159,7 @@ export default function Dialer({
           <ActiveLeadCard lead={activeLead} leadIndex={Math.max(activeLeadIndex, 0)} totalLeads={leads.length} />
         </div>
 
-        <div className="flex-1 min-h-[200px] flex flex-col rounded-2xl bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 overflow-hidden backdrop-blur-sm shadow-xl">
+        <div className="flex-1 min-h-[200px] flex flex-col surface-card overflow-hidden shadow-xl animate-slide-up" style={{ animationDelay: '500ms' }}>
           <ConversationFeed turns={turns} isProcessing={status === 'processing'} />
         </div>
 

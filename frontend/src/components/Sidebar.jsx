@@ -9,49 +9,62 @@ export default function Sidebar({ activeTab, onTabChange, onTabHover }) {
   ];
 
   return (
-    <aside className="sticky top-0 flex h-full w-64 shrink-0 flex-col border-r border-slate-200/90 bg-white/80 backdrop-blur-xl dark:border-gray-800/60 dark:bg-gray-900/50">
-      <div className="flex h-16 shrink-0 items-center border-b border-slate-200/90 px-5 dark:border-gray-800/60 sm:px-6">
-        <div className="mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-md shadow-brand-500/25">
-          <span className="text-xs font-bold tracking-tight text-white">VA</span>
+    <aside className="sticky top-0 flex h-screen w-72 shrink-0 flex-col p-4 lg:p-6 z-20">
+      <div className="surface-card flex h-full w-full flex-col overflow-hidden !rounded-[2rem] border border-white/60 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
+        <div className="flex h-24 shrink-0 items-center px-6 relative overflow-hidden border-b border-slate-200/50 dark:border-white/5">
+          {/* Subtle gradient glow behind logo */}
+          <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-brand-500/20 blur-2xl" />
+          
+          <div className="mr-4 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 shadow-lg shadow-brand-500/30 relative z-10 border border-white/20">
+            <span className="text-sm font-bold tracking-tight text-white">VA</span>
+          </div>
+          <div className="min-w-0 relative z-10">
+            <h1 className="truncate text-base font-semibold leading-tight text-slate-900 dark:text-white">Voice Agent</h1>
+            <p className="mt-0.5 text-[10px] font-bold uppercase leading-none tracking-widest text-brand-600 dark:text-brand-400">
+              AI Assistant
+            </p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold leading-tight text-slate-900 dark:text-white">Voice Agent</h1>
-          <p className="mt-0.5 text-[10px] font-semibold uppercase leading-none tracking-widest text-brand-600 dark:text-brand-400/90">
-            AI Agent
-          </p>
-        </div>
-      </div>
 
-      <nav className="custom-scrollbar flex-1 space-y-1 overflow-y-auto px-3 py-6">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => onTabChange(tab.id)}
-              onMouseEnter={() => onTabHover?.(tab.id)}
-              onFocus={() => onTabHover?.(tab.id)}
-              className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-sm font-medium motion-safe:transition-all motion-safe:duration-200 ${
-                isActive
-                  ? 'bg-brand-500/15 text-brand-700 dark:bg-brand-500/10 dark:text-brand-400'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-gray-400 dark:hover:bg-gray-800/50 dark:hover:text-gray-200'
-              }`}
-            >
-              <Icon
-                className={`mr-3 h-5 w-5 transition-colors ${
+        <nav className="custom-scrollbar flex-1 space-y-2 overflow-y-auto px-4 py-6 relative z-10">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onTabChange(tab.id)}
+                onMouseEnter={() => onTabHover?.(tab.id)}
+                onFocus={() => onTabHover?.(tab.id)}
+                className={`group relative flex w-full items-center rounded-2xl px-4 py-3.5 text-sm font-semibold transition-all duration-300 outline-none ${
                   isActive
-                    ? 'text-brand-600 dark:text-brand-400'
-                    : 'text-slate-400 group-hover:text-slate-600 dark:text-gray-500 dark:group-hover:text-gray-400'
+                    ? 'text-white shadow-md hover:-translate-y-0.5'
+                    : 'text-slate-600 hover:bg-slate-100/50 hover:text-slate-900 dark:text-gray-400 dark:hover:bg-gray-800/30 dark:hover:text-gray-200'
                 }`}
-                strokeWidth={isActive ? 2.5 : 2}
-              />
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
+              >
+                {isActive && (
+                  <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-brand-500 to-indigo-500 opacity-90 shadow-lg shadow-brand-500/25 border border-white/20" />
+                )}
+                
+                <Icon
+                  className={`mr-3 h-5 w-5 transition-colors relative z-10 ${
+                    isActive
+                      ? 'text-white'
+                      : 'text-slate-400 group-hover:text-brand-500 dark:text-gray-500 dark:group-hover:text-brand-400'
+                  }`}
+                  strokeWidth={isActive ? 2.5 : 2}
+                />
+                <span className="relative z-10">{tab.label}</span>
+                
+                {isActive && (
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
     </aside>
   );
 }

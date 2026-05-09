@@ -6,7 +6,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        sans: ['Outfit', 'sans-serif'],
       },
       colors: {
         brand: {
@@ -29,9 +29,12 @@ export default {
       },
       animation: {
         'pulse-ring': 'pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite',
-        'fade-in': 'fade-in 0.3s ease-out',
-        'slide-up': 'slide-up 0.3s ease-out',
-        'slide-in-right': 'slide-in-right 0.25s ease-out',
+        'fade-in': 'fade-in 0.4s ease-out forwards',
+        'fade-in-up': 'fade-in-up 0.5s ease-out forwards',
+        'slide-up': 'slide-up 0.4s ease-out forwards',
+        'slide-in-right': 'slide-in-right 0.3s ease-out forwards',
+        'float': 'float 6s ease-in-out infinite',
+        'blob': 'blob 7s infinite',
       },
       keyframes: {
         'pulse-ring': {
@@ -40,16 +43,30 @@ export default {
           '100%': { transform: 'scale(0.95)', boxShadow: '0 0 0 0 rgba(195, 70, 239, 0)' },
         },
         'fade-in': {
-          from: { opacity: 0 },
-          to:   { opacity: 1 },
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        'fade-in-up': {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         'slide-up': {
-          from: { opacity: 0, transform: 'translateY(8px)' },
-          to:   { opacity: 1, transform: 'translateY(0)' },
+          '0%': { opacity: '0', transform: 'translateY(20px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         'slide-in-right': {
-          from: { transform: 'translateX(100%)' },
-          to:   { transform: 'translateX(0)' },
+          '0%': { transform: 'translateX(100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
+        'float': {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-10px)' },
+        },
+        'blob': {
+          '0%': { transform: 'translate(0px, 0px) scale(1)' },
+          '33%': { transform: 'translate(30px, -50px) scale(1.1)' },
+          '66%': { transform: 'translate(-20px, 20px) scale(0.9)' },
+          '100%': { transform: 'translate(0px, 0px) scale(1)' },
         },
       },
     },

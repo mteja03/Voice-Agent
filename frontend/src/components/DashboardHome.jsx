@@ -200,6 +200,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-blue-500"
               spark={callsSpark}
               sparkStroke={STROKE.blue}
+              delay={0}
             />
             <StatCard
               title="Interested Leads"
@@ -209,6 +210,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-emerald-500"
               spark={interestedSpark}
               sparkStroke={STROKE.emerald}
+              delay={100}
             />
             <StatCard
               title="Conversion Rate"
@@ -218,6 +220,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-brand-500"
               spark={conversionSpark}
               sparkStroke={STROKE.brand}
+              delay={200}
             />
             <StatCard
               title="Avg Call Duration"
@@ -227,6 +230,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-indigo-500"
               spark={durationSpark}
               sparkStroke={STROKE.indigo}
+              delay={300}
             />
             <StatCard
               title="Active Campaign"
@@ -236,11 +240,12 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-amber-500"
               spark={campaignSpark}
               sparkStroke={STROKE.amber}
+              delay={400}
             />
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <div className="surface-card flex flex-col p-6 lg:col-span-2">
+            <div className="surface-card flex flex-col p-6 lg:col-span-2 animate-slide-up" style={{ animationDelay: '500ms' }}>
               <h2 className="mb-6 text-lg font-semibold text-slate-900 dark:text-white">Call Volume (Last 7 Days)</h2>
               <div className="min-h-[300px] flex-1">
                 {callsByDate.length > 0 ? (
@@ -281,7 +286,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               </div>
             </div>
 
-            <div className="surface-card flex flex-col p-6">
+            <div className="surface-card flex flex-col p-6 animate-slide-up" style={{ animationDelay: '600ms' }}>
               <h2 className="mb-6 text-lg font-semibold text-slate-900 dark:text-white">Outcome Distribution</h2>
               <div className="min-h-[300px] flex-1">
                 {outcomes.length > 0 ? (
@@ -330,7 +335,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div className="surface-card p-6">
+            <div className="surface-card p-6 animate-slide-up" style={{ animationDelay: '700ms' }}>
               <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Active Campaign Progress</h2>
               <div className="space-y-6">
                 <div>
@@ -369,7 +374,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               )}
             </div>
 
-            <div className="surface-card p-6">
+            <div className="surface-card p-6 animate-slide-up" style={{ animationDelay: '800ms' }}>
               <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Recent Activity (Local)</h2>
               <div className="space-y-4">
                 {leads
@@ -438,10 +443,13 @@ function EmptyAnalyticsPanel({ icon: Icon, title, body, primaryLabel, onPrimary,
   );
 }
 
-function StatCard({ title, value, icon: Icon, trend, color, spark, sparkStroke }) {
+function StatCard({ title, value, icon: Icon, trend, color, spark, sparkStroke, delay = 0 }) {
   return (
-    <div className="surface-card group relative overflow-hidden p-6 shadow-lg motion-safe:transition-colors motion-safe:duration-200 hover:border-slate-300 dark:hover:border-gray-700/80">
-      <div className={`absolute -right-10 -top-10 h-32 w-32 rounded-full ${color}/5 blur-3xl transition-opacity motion-reduce:transition-none group-hover:opacity-100 opacity-50`} />
+    <div 
+      className="surface-card group relative overflow-hidden p-6 shadow-lg motion-safe:transition-all motion-safe:duration-300 hover:-translate-y-1 hover:shadow-xl dark:hover:shadow-[0_8px_30px_rgb(0,0,0,0.5)] animate-slide-up"
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <div className={`absolute -right-10 -top-10 h-32 w-32 rounded-full ${color}/20 blur-3xl transition-all duration-500 group-hover:scale-150 group-hover:opacity-70 opacity-30`} />
       <div className="relative z-10 flex items-start justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium text-slate-600 dark:text-gray-400">{title}</p>

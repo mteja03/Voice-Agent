@@ -4,9 +4,15 @@
 
 @layer base {
   body {
-    @apply bg-slate-100 text-slate-900 antialiased dark:bg-black dark:text-gray-100;
-    font-family: 'Inter', sans-serif;
+    @apply bg-slate-50 text-slate-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+    font-family: 'Outfit', sans-serif;
     overscroll-behavior-y: none;
+  }
+
+  /* Enhanced Background Gradients */
+  body::before {
+    content: '';
+    @apply absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-brand-100/40 via-slate-50/20 to-slate-50 dark:from-brand-900/20 dark:via-gray-950/20 dark:to-gray-950 pointer-events-none;
   }
 
   * {
@@ -27,7 +33,7 @@
   input:focus-visible,
   textarea:focus-visible,
   [tabindex]:not([tabindex="-1"]):focus-visible {
-    @apply ring-2 ring-brand-400/80 ring-offset-2 ring-offset-slate-100 dark:ring-offset-black;
+    @apply ring-2 ring-brand-400/80 ring-offset-2 ring-offset-slate-100 dark:ring-offset-gray-950;
   }
 
   ::-webkit-scrollbar {
@@ -38,7 +44,7 @@
     @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply rounded-full border border-slate-200 bg-slate-300 dark:border-black dark:bg-gray-800;
+    @apply rounded-full border border-slate-200 bg-slate-300 dark:border-gray-900 dark:bg-gray-800;
   }
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-slate-400 dark:bg-gray-700;
@@ -58,31 +64,42 @@
 
 @layer utilities {
   .text-gradient {
-    @apply bg-gradient-to-r from-brand-400 to-gold-400 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-brand-500 to-indigo-500 bg-clip-text text-transparent dark:from-brand-400 dark:to-indigo-400;
   }
 
   .custom-scrollbar {
     scrollbar-gutter: stable;
   }
 
+  /* Premium Glassmorphism */
   .surface-card {
-    @apply rounded-2xl border border-slate-200/90 bg-white/90 text-slate-900 shadow-md shadow-slate-200/60 backdrop-blur-md dark:border-gray-800/70 dark:bg-gray-900/60 dark:text-gray-200 dark:shadow-black/40;
+    @apply rounded-2xl border border-white/60 bg-white/70 text-slate-900 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-xl transition-all duration-300 hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:border-white/10 dark:bg-gray-900/50 dark:text-gray-200 dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] dark:hover:border-white/20;
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.4);
+  }
+
+  .dark .surface-card {
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
   }
 
   .ui-surface {
-    @apply border border-slate-200/90 bg-white/80 text-slate-900 backdrop-blur-sm dark:border-gray-800/60 dark:bg-gray-900/40 dark:text-gray-200;
+    @apply border border-white/50 bg-white/60 text-slate-900 backdrop-blur-lg dark:border-white/10 dark:bg-gray-900/40 dark:text-gray-200;
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+  }
+  
+  .dark .ui-surface {
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.02);
   }
 
   .ui-muted {
-    @apply border border-slate-300 bg-slate-100 text-slate-800 transition-colors hover:bg-slate-200 hover:text-slate-950 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white;
+    @apply border border-slate-200/50 bg-slate-100/50 text-slate-800 transition-all hover:bg-slate-200/50 hover:text-slate-950 dark:border-gray-800/50 dark:bg-gray-800/30 dark:text-gray-300 dark:hover:bg-gray-700/50 dark:hover:text-white backdrop-blur-md;
   }
 
   .ui-primary {
-    @apply border border-brand-500 bg-brand-600 text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-500 dark:shadow-brand-500/20;
+    @apply relative overflow-hidden border border-brand-500/80 bg-brand-600 text-white shadow-lg shadow-brand-500/20 transition-all hover:bg-brand-500 hover:-translate-y-0.5 hover:shadow-brand-500/30 dark:shadow-brand-500/20;
   }
 
   .ui-pill {
-    @apply rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors;
+    @apply rounded-full border border-slate-200/60 bg-white/50 px-3 py-1.5 text-[11px] font-medium transition-all backdrop-blur-md dark:border-gray-800/60 dark:bg-gray-900/50;
   }
 
   .app-stack-gap {
@@ -91,5 +108,10 @@
 
   .app-shell-padding {
     @apply px-4 py-6 sm:px-8 sm:py-8;
+  }
+
+  /* Animated Blob utility for background effects */
+  .bg-blob {
+    @apply absolute rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob dark:mix-blend-screen;
   }
 }

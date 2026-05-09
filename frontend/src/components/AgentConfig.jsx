@@ -191,8 +191,8 @@ export default function AgentConfig({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 text-slate-800 dark:bg-gray-950 dark:text-gray-200 relative">
-      <header className="px-8 py-6 border-b border-slate-200/80 dark:border-gray-800/60 bg-white/70 backdrop-blur dark:bg-gray-900/30">
+    <div className="flex-1 flex flex-col h-full bg-transparent text-slate-800 dark:text-gray-200 relative">
+      <header className="px-8 py-6 border-b border-white/10 dark:border-white/5 animate-slide-up" style={{ animationDelay: '300ms' }}>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Agent Configuration</h1>
@@ -222,11 +222,11 @@ export default function AgentConfig({
       <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
         {activeTab === 'general' && (
           <div className="max-w-3xl space-y-8">
-            <p className="text-xs text-slate-600 dark:text-gray-500 -mt-1">
+            <p className="text-xs text-slate-600 dark:text-gray-500 -mt-1 animate-slide-up" style={{ animationDelay: '350ms' }}>
               Voice, language, and schedule changes save automatically. Watch the sync status in the page header — if sync
               fails, your edits are still kept in this browser until the server accepts them.
             </p>
-            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+            <section className="surface-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '400ms' }}>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">Agent Personalization</h2>
               
               <div className="space-y-5">
@@ -269,7 +269,7 @@ export default function AgentConfig({
               </div>
             </section>
 
-            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+            <section className="surface-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '500ms' }}>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">Operating Schedule</h2>
               <div className="grid grid-cols-2 gap-6">
                 <div>
@@ -308,13 +308,13 @@ export default function AgentConfig({
         )}
 
         {activeTab === 'knowledge-base' && (
-          <div className="max-w-5xl flex flex-col gap-3 h-[600px]">
+          <div className="max-w-5xl flex flex-col gap-3 h-[600px] animate-slide-up" style={{ animationDelay: '400ms' }}>
             <p className="text-xs text-slate-600 dark:text-gray-500 shrink-0">
               Company profile uses <span className="text-slate-800 dark:text-gray-400">Save Profile</span>. Projects are saved when you create or update them. Without projects, the agent has no inventory to discuss.
             </p>
             <div className="flex gap-6 flex-1 min-h-0">
             {/* KB Sidebar */}
-            <div className="w-64 bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl flex flex-col overflow-hidden shrink-0">
+            <div className="w-64 surface-card flex flex-col overflow-hidden shrink-0">
               <button
                 onClick={() => setKbPane('company')}
                 className={`w-full text-left px-4 py-4 border-b border-slate-200/90 dark:border-gray-800/60 flex items-center gap-3 transition-colors ${kbPane === 'company' ? 'bg-slate-200 text-slate-900 dark:bg-gray-800 dark:text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-800/50'}`}
@@ -364,7 +364,7 @@ export default function AgentConfig({
             </div>
 
             {/* KB Content */}
-            <div className="flex-1 min-w-0 bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl overflow-hidden shadow-xl flex flex-col">
+            <div className="flex-1 min-w-0 surface-card overflow-hidden shadow-xl flex flex-col">
               {kbPane === 'company' ? (
                 <>
                   <div className="p-4 border-b border-slate-200/90 dark:border-gray-800/60 flex flex-wrap items-center justify-between gap-2 bg-slate-50/90 dark:bg-gray-900/50">
@@ -514,7 +514,7 @@ export default function AgentConfig({
               Intro and consent text save automatically to your workspace when you edit them.
             </p>
             <ConversationPlaceholderReference />
-            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+            <section className="surface-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '400ms' }}>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Introduction Messaging</h2>
               <p className="text-xs text-slate-600 dark:text-gray-400 mb-6">
                 First spoken line when the call connects. Type any of the tokens from the reference above; they are
@@ -529,7 +529,7 @@ export default function AgentConfig({
               />
             </section>
 
-            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+            <section className="surface-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '500ms' }}>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Voicemail Drop</h2>
               <p className="text-xs text-slate-600 dark:text-gray-400 mb-6">
                 Saved with your workspace. Use the same placeholders as the intro so copy stays consistent when this flow
@@ -544,7 +544,7 @@ export default function AgentConfig({
               />
             </section>
 
-            <section className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl p-6 backdrop-blur-sm shadow-xl">
+            <section className="surface-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '600ms' }}>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Privacy Consent Messaging</h2>
               <p className="text-xs text-slate-600 dark:text-gray-400 mb-6">
                 Enable a recording notice where required. You can personalize it with the same placeholders (e.g. company
@@ -645,8 +645,8 @@ function CopyTokenButton({ token }) {
 
 function ConversationPlaceholderReference() {
   return (
-    <details className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl overflow-hidden group [&_summary::-webkit-details-marker]:hidden">
-      <summary className="cursor-pointer list-none px-5 py-3.5 text-sm font-medium text-brand-700 hover:bg-slate-50 dark:text-brand-300 dark:hover:bg-gray-900/80 flex items-center justify-between gap-2">
+    <details className="surface-card rounded-2xl overflow-hidden group [&_summary::-webkit-details-marker]:hidden animate-slide-up" style={{ animationDelay: '350ms' }}>
+      <summary className="cursor-pointer list-none px-5 py-3.5 text-sm font-medium text-brand-700 hover:bg-white/10 dark:text-brand-300 dark:hover:bg-white/5 flex items-center justify-between gap-2">
         <span>Placeholder reference — click to expand</span>
         <span className="text-slate-500 dark:text-gray-500 text-xs font-normal group-open:hidden">▼</span>
         <span className="text-slate-500 dark:text-gray-500 text-xs font-normal hidden group-open:inline">▲</span>

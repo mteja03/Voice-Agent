@@ -265,8 +265,8 @@ export default function Campaigns({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 text-slate-800 dark:bg-gray-950 dark:text-gray-200">
-      <header className="px-8 py-6 border-b border-slate-200/80 dark:border-gray-800/60 bg-white/70 backdrop-blur dark:bg-gray-900/30 flex items-center justify-between">
+    <div className="flex-1 flex flex-col h-full bg-transparent text-slate-800 dark:text-gray-200">
+      <header className="px-8 py-6 border-b border-white/10 dark:border-white/5 flex items-center justify-between animate-slide-up" style={{ animationDelay: '300ms' }}>
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Campaigns</h1>
           <p className="text-sm text-slate-600 dark:text-gray-400 mt-1">Manage and call your imported lead lists.</p>
@@ -309,7 +309,7 @@ export default function Campaigns({
 
       <div className="flex-1 overflow-auto custom-scrollbar">
         <div className="max-w-7xl mx-auto w-full px-4 sm:px-8 py-8">
-        <section className="mb-8 rounded-2xl border border-slate-200/90 dark:border-gray-800/70 bg-white/80 dark:bg-gray-900/40 p-4 sm:p-5">
+        <section className="mb-8 surface-card p-6 animate-slide-up" style={{ animationDelay: '400ms' }}>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-500 mb-3">
             Campaigns (independent lists)
           </p>
@@ -590,9 +590,9 @@ export default function Campaigns({
             </div>
 
             {/* Table */}
-            <div className="bg-white/90 border border-slate-200/90 dark:bg-gray-900/50 dark:border-gray-800/60 rounded-2xl overflow-hidden backdrop-blur-sm">
+            <div className="surface-card overflow-hidden animate-slide-up" style={{ animationDelay: '500ms' }}>
               <table className="w-full text-left text-sm text-slate-600 dark:text-gray-400">
-                <thead className="bg-slate-100/95 text-slate-700 dark:bg-gray-900/80 dark:text-gray-300 text-xs uppercase tracking-wider font-semibold border-b border-slate-200/90 dark:border-gray-800/60">
+                <thead className="bg-white/50 text-slate-700 dark:bg-white/5 dark:text-gray-300 text-xs uppercase tracking-wider font-semibold border-b border-slate-200/50 dark:border-white/10">
                   <tr>
                     <th className="pl-4 pr-2 py-4 w-10">
                       <input

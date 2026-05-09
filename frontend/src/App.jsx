@@ -524,12 +524,12 @@ export default function App() {
   }
 
   return (
-    <div className="motion-safe:transition-colors motion-safe:duration-200 flex h-screen w-full overflow-hidden bg-slate-100 font-sans antialiased text-slate-900 dark:bg-black dark:text-gray-200">
+    <div className="motion-safe:transition-colors motion-safe:duration-200 flex h-screen w-full overflow-hidden font-sans antialiased text-slate-900 dark:text-gray-200">
       <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onTabHover={prefetchTab} />
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pr-4 lg:pr-6 py-4 lg:py-6 gap-4 lg:gap-6">
         <header
-          className="z-30 flex h-16 shrink-0 items-center gap-3 border-b border-slate-200/90 bg-white/95 px-4 backdrop-blur-sm dark:border-gray-800/60 dark:bg-gray-950/95 sm:gap-5 sm:px-6"
+          className="z-30 surface-card flex h-16 shrink-0 items-center gap-3 px-6 shadow-sm sm:gap-5"
           aria-label="Workspace and account"
         >
           <div className="min-w-0 flex-1 pr-2">
@@ -604,7 +604,13 @@ export default function App() {
               <span className="hidden h-7 w-px shrink-0 bg-slate-200 dark:bg-gray-700 sm:block" aria-hidden />
             )}
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-3">
+              <span className="hidden rounded-md bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 ring-1 ring-inset ring-brand-700/10 dark:bg-brand-500/10 dark:text-brand-400 dark:ring-brand-500/20 sm:flex items-center gap-1.5 shadow-sm max-w-[12rem]">
+                <Building2 className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">
+                  {tenants.find(t => t.id === authUser?.activeCompanyId)?.name || authUser?.companyName || 'Workspace'}
+                </span>
+              </span>
               <ThemeToggle />
               <button
                 type="button"
@@ -617,12 +623,12 @@ export default function App() {
           </div>
         </header>
         {tenantActionError && (
-          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-300">
+          <div className="flex-shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-300">
             {tenantActionError}
           </div>
         )}
 
-        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="relative surface-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <Suspense fallback={<TabRouteFallback />}>
             {activeTab === 'dashboard' && (
               <DashboardHome
@@ -693,8 +699,13 @@ function AuthScreen({ onSubmit, loading, error }) {
   const [companyName, setCompanyName] = useState('Voice Agent Company');
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-slate-900 dark:bg-gray-950 dark:text-gray-200">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-gray-800 dark:bg-gray-900">
+    <div className="relative flex min-h-screen items-center justify-center font-sans px-4 text-slate-900 dark:text-gray-200 overflow-hidden">
+      {/* Background Orbs */}
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob dark:mix-blend-screen" />
+      <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-2000 dark:mix-blend-screen" />
+      <div className="absolute -bottom-32 left-1/2 w-96 h-96 bg-purple-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-4000 dark:mix-blend-screen" />
+      
+      <div className="surface-card relative z-10 w-full max-w-md p-8">
         <div className="mb-4 flex justify-end">
           <ThemeToggle />
         </div>
