@@ -260,6 +260,8 @@ export default function App() {
   const {
     status,
     socketReady,
+    reconnecting,
+    reconnectAttempt,
     turns,
     errorMsg,
     closeDetected,
@@ -270,10 +272,13 @@ export default function App() {
     vadLoading,
     vadError,
     isVadListening,
+    isPushToTalkMode,
     startVad,
     pauseVad,
     endCall,
     retryIntro,
+    startPushToTalk,
+    stopPushToTalk,
   } = useVoiceAgent(SESSION_ID, settings, activeLead);
 
   useEffect(() => {
@@ -658,12 +663,15 @@ export default function App() {
               <Dialer
                 status={status}
                 socketReady={socketReady}
+                reconnecting={reconnecting}
+                reconnectAttempt={reconnectAttempt}
                 turns={turns}
                 errorMsg={errorMsg}
                 closeDetected={closeDetected}
                 vadLoading={vadLoading}
                 vadError={vadError}
                 isVadListening={isVadListening}
+                isPushToTalkMode={isPushToTalkMode}
                 startVad={startVad}
                 pauseVad={pauseVad}
                 endCall={endCall}
@@ -676,6 +684,8 @@ export default function App() {
                 lastCallSummary={lastCallSummary}
                 onRetryConnection={retryConnection}
                 onOpenCampaigns={() => setActiveTab('campaigns')}
+                startPushToTalk={startPushToTalk}
+                stopPushToTalk={stopPushToTalk}
               />
             )}
             {activeTab === 'agent-config' && (

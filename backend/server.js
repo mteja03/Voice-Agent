@@ -203,10 +203,14 @@ io.use(async (socket, next) => {
 // when the user barges in.
 const activeSessions = new Map(); // socketId → AbortController
 const sessionStartTimes = new Map(); // sessionId → startTime in ms
+const socketNoiseCounts = new Map(); // socketId → consecutive no-speech count
 // Keep this strict to avoid accidental auto-hangups during normal polite replies.
 const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|goodbye|bye|have a great day|हम फिर बात करेंगे)/i;
 const STT_TIMEOUT_MS = 15000;
 const TTS_TIMEOUT_MS = 20000;
+// After this many consecutive empty/low-signal turns, emit a gentle "can you hear me?" nudge.
+const STT_NOISE_NUDGE_THRESHOLD = 2;
+const STT_NOISE_NUDGE_TEXT = 'మీరు వినపడుతున్నారా? మీరు మాట్లాడవచ్చు.';
 
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
@@ -558,8 +562,10 @@ io.on('connection', (socket) => {
 
   socket.on('process_audio', async (data) => {
     if (!socket.user?.companyId) return;
-    const { audioBuffer, sessionId, sttModel, ttsModel, ttsVoice, lead, languageMode, agentName } = data;
+    const { audioBuffer, sessionId, sttModel, ttsModel, ttsVoice, lead, languageMode, agentName, mimeType } = data;
     if (!companyId || !sessionId) return;
+    // Resolve MIME type: client sends it for push-to-talk (mp4/webm); default to WAV for VAD path
+    const audioMimeType = (typeof mimeType === 'string' && mimeType.trim()) ? mimeType.trim() : 'audio/wav';
 
     // Cancel any previous in-flight request for this socket (barge-in safety net)
     const existingCtrl = activeSessions.get(socket.id);
@@ -581,7 +587,7 @@ io.on('connection', (socket) => {
       try {
         const sttPromise = transcribeAudio(
           audioBuffer,
-          'audio/wav',
+          audioMimeType,
           sttModel || 'saarika:v2.5',
           resolveSttLanguageCode(languageMode)
         );
@@ -609,7 +615,7 @@ io.on('connection', (socket) => {
       if (transcript.length === 0) {
         console.log('[STT Fallback] Retrying with unknown lang (empty transcript)');
         try {
-          const sttPromise = transcribeAudio(audioBuffer, 'audio/wav', sttModel || 'saarika:v2.5', 'unknown');
+          const sttPromise = transcribeAudio(audioBuffer, audioMimeType, sttModel || 'saarika:v2.5', 'unknown');
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
           );
@@ -632,15 +638,49 @@ io.on('connection', (socket) => {
       if (signal.aborted) return;
       if (!transcript || !transcript.trim()) {
         logger.warn('stt_no_speech', { companyId, sessionId });
-        emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
+        const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
+        socketNoiseCounts.set(socket.id, noiseCount);
+        if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
+          socketNoiseCounts.set(socket.id, 0);
+          console.log(`[STT Noise] ${noiseCount} consecutive empty turns — emitting nudge`);
+          try {
+            const nudgeAudio = await synthesizeSpeech(
+              STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
+            );
+            if (!signal.aborted) {
+              socket.emit('tts_audio_chunk', { audioBuffer: Buffer.from(nudgeAudio, 'base64'), text: STT_NOISE_NUDGE_TEXT });
+              socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
+            }
+          } catch { socket.emit('no_speech'); }
+        } else {
+          socket.emit('no_speech');
+        }
         return;
       }
       transcript = transcript.trim();
       if (isLowSignalTranscript(transcript)) {
         console.log(`[STT] Low-signal transcript ignored: "${transcript}"`);
-        socket.emit('no_speech');
+        const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
+        socketNoiseCounts.set(socket.id, noiseCount);
+        if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
+          socketNoiseCounts.set(socket.id, 0);
+          console.log(`[STT Noise] ${noiseCount} low-signal turns — emitting nudge`);
+          try {
+            const nudgeAudio = await synthesizeSpeech(
+              STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
+            );
+            if (!signal.aborted) {
+              socket.emit('tts_audio_chunk', { audioBuffer: Buffer.from(nudgeAudio, 'base64'), text: STT_NOISE_NUDGE_TEXT });
+              socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
+            }
+          } catch { socket.emit('no_speech'); }
+        } else {
+          socket.emit('no_speech');
+        }
         return;
       }
+      // Valid transcript — reset noise counter
+      socketNoiseCounts.set(socket.id, 0);
       const sttMs = nowMs() - sttStartMs;
       socket.emit('transcript', { transcript });
 
@@ -730,6 +770,7 @@ io.on('connection', (socket) => {
     const ctrl = activeSessions.get(socket.id);
     if (ctrl) ctrl.abort();
     activeSessions.delete(socket.id);
+    socketNoiseCounts.delete(socket.id);
     logger.info('socket_disconnected', {
       socketId: socket.id,
       reason,

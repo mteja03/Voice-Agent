@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Users, ChevronRight } from 'lucide-react';
+import { Users, ChevronRight, Loader2, WifiOff } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import ActiveLeadCard from './ActiveLeadCard';
 import ConversationFeed from './ConversationFeed';
@@ -9,6 +9,8 @@ import CallLifecycleStrip from './CallLifecycleStrip';
 export default function Dialer({
   status,
   socketReady = true,
+  reconnecting = false,
+  reconnectAttempt = 0,
   turns,
   errorMsg,
   closeDetected,
@@ -27,9 +29,15 @@ export default function Dialer({
   lastCallSummary,
   onRetryConnection,
   onOpenCampaigns,
+  isPushToTalkMode = false,
+  startPushToTalk,
+  stopPushToTalk,
 }) {
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
-  const displayError = errorMsg || (vadError ? 'VAD Error: ' + (vadError.message || 'Microphone access denied or model failed to load.') : null);
+  // Only show VAD errors when NOT in PTT mode (PTT is the graceful fallback for VAD failure)
+  const displayError = errorMsg || (!isPushToTalkMode && vadError
+    ? 'VAD Error: ' + ((vadError instanceof Error ? vadError.message : null) || 'Microphone access denied or model failed to load.')
+    : null);
   const showConnectionRetry =
     Boolean(errorMsg) &&
     /connect|backend|Disconnected|Unable to connect|Reconnecting/i.test(errorMsg);
@@ -163,9 +171,21 @@ export default function Dialer({
           <ConversationFeed turns={turns} isProcessing={status === 'processing'} />
         </div>
 
-        {vadLoading && (
+        {vadLoading && !isPushToTalkMode && (
           <div className="flex-shrink-0 px-4 py-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-800 dark:text-blue-400 text-sm animate-fade-in text-center">
             Initializing AI voice detection...
+          </div>
+        )}
+
+        {/* Reconnecting banner — shown while socket is actively trying to reconnect */}
+        {reconnecting && (
+          <div className="flex-shrink-0 flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-sm animate-fade-in">
+            <WifiOff className="w-4 h-4 shrink-0 opacity-80" aria-hidden />
+            <p className="flex-1 min-w-0">
+              Connection dropped — reconnecting
+              {reconnectAttempt > 1 ? ` (attempt ${reconnectAttempt})` : '…'}
+            </p>
+            <Loader2 className="w-4 h-4 shrink-0 animate-spin opacity-70" aria-hidden />
           </div>
         )}
 
@@ -229,6 +249,9 @@ export default function Dialer({
             socketReady={socketReady}
             startVad={startVad}
             pauseVad={pauseVad}
+            isPushToTalkMode={isPushToTalkMode}
+            startPushToTalk={startPushToTalk}
+            stopPushToTalk={stopPushToTalk}
           />
           <p className="text-xs text-slate-600 dark:text-gray-500 text-center">
             {turns.length === 0
