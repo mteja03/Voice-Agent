@@ -34,6 +34,7 @@ function getSupportedAudioMimeType() {
 
 export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
+  const [processingStage, setProcessingStage] = useState(null); // 'transcribing' | 'generating' | 'synthesizing' | null
   const [socketReady, setSocketReady] = useState(() => Boolean(socket.connected));
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
@@ -181,11 +182,13 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     const handleTranscript = ({ transcript }) => {
       setTurns(prev => [...prev, { transcript, aiText: '' }]);
       setStatus('processing');
+      setProcessingStage('generating'); // STT done → now generating LLM reply
     };
 
     const handleTtsAudioChunk = async ({ audioBuffer, text }) => {
       assistantBusyRef.current = true;
       introPendingRef.current = false;
+      setProcessingStage(null);
       vadRef.current?.pause();
       setTurns(prev => {
         const newTurns = [...prev];
@@ -203,10 +206,20 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       playNextAudioRef.current?.();
     };
 
-    const handleResponseComplete = ({ shouldEndCall }) => {
+    const handleResponseComplete = ({ shouldEndCall, latency }) => {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
+      setProcessingStage(null);
+      // Attach latency to the most recent turn so each bubble can show its response time.
+      if (latency) {
+        setTurns(prev => {
+          if (!prev.length) return prev;
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...updated[updated.length - 1], latency };
+          return updated;
+        });
+      }
       setCloseDetected(Boolean(shouldEndCall));
       if (latestSettingsRef.current?.autoEndCall && shouldEndCall) {
         closingPlaybackUntilRef.current = Date.now() + 2200;
@@ -219,6 +232,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
+      setProcessingStage(null);
       setStatus('idle');
     };
 
@@ -228,6 +242,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
+      setProcessingStage(null);
       setErrorMsg(message);
       setStatus('idle');
     };
@@ -363,8 +378,9 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     startOnLoad: false,
     workletURL: '/vad/vad.worklet.bundle.min.js',
     modelURL: '/vad/silero_vad.onnx',
-    minSpeechMs: 250,
-    redemptionMs: 500,
+    minSpeechMs: 200,
+    // 350ms silence → audio sent (was 500ms — saves ~150ms every single turn)
+    redemptionMs: 350,
     preSpeechPadMs: 120,
     ortConfig: (ort) => {
       ort.env.wasm.wasmPaths = '/vad/';
@@ -381,6 +397,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       const now = Date.now();
       if (now - lastProcessEmitAtRef.current < 900) return;
       setStatus('processing');
+      setProcessingStage('transcribing'); // audio sent → waiting for STT
       const pcm16 = new Int16Array(audioData.length);
       for (let i = 0; i < audioData.length; i++) {
         const s = Math.max(-1, Math.min(1, audioData[i]));
@@ -459,6 +476,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         assistantBusyRef.current = true;
         lastProcessEmitAtRef.current = Date.now();
         setStatus('processing');
+        setProcessingStage('transcribing');
 
         socketRef.current.emit('process_audio', {
           audioBuffer: blob,
@@ -510,6 +528,17 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const startVoiceAssistant = useCallback(async () => {
     setLastCallSummary(null);
     autoListenEnabledRef.current = true;
+
+    // Pre-warm AudioContext on the user gesture so the first audio chunk
+    // plays immediately without the ~50ms creation overhead.
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      try {
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume().catch(() => {});
+        }
+      } catch { /* ignore — will be created on first chunk */ }
+    }
 
     if (!hasSentIntroRef.current && turns.length === 0 && socketRef.current?.connected) {
       hasSentIntroRef.current = true;
@@ -582,6 +611,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
 
   return {
     status,
+    processingStage,
     socketReady,
     reconnecting,
     reconnectAttempt,

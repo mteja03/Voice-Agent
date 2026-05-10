@@ -1,14 +1,48 @@
 import { useEffect, useRef } from 'react';
 
-function MessageBubble({ turn }) {
+function formatMs(ms) {
+  if (ms == null) return null;
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function LatencyBadge({ latency }) {
+  if (!latency?.total) return null;
+  const total = formatMs(latency.total);
+  const parts = [
+    latency.stt  != null && `STT ${formatMs(latency.stt)}`,
+    latency.llm  != null && `LLM ${formatMs(latency.llm)}`,
+    latency.tts  != null && `TTS ${formatMs(latency.tts)}`,
+  ].filter(Boolean);
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-gray-700/60 text-slate-500 dark:text-gray-400 font-mono border border-slate-300/60 dark:border-gray-600/40">
+        ⚡ {total}
+      </span>
+      {parts.map((p) => (
+        <span key={p} className="text-[9px] text-slate-400 dark:text-gray-500 font-mono">
+          {p}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function MessageBubble({ turn, isStreaming }) {
   if (turn.isIntro) {
     return (
       <div className="flex justify-start animate-slide-up">
         <div className="max-w-[82%]">
           <p className="text-xs text-slate-500 dark:text-gray-500 mb-1">Voice Agent</p>
           <div className="bg-slate-100 border border-slate-200/90 dark:bg-gray-800/85 dark:border-gray-700/50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg shadow-slate-900/5 dark:shadow-black/20">
-            <p className="text-sm text-slate-800 dark:text-gray-100 leading-relaxed">{turn.aiText}</p>
+            <p className="text-sm text-slate-800 dark:text-gray-100 leading-relaxed">
+              {turn.aiText}
+              {isStreaming && (
+                <span className="inline-block w-0.5 h-4 bg-slate-400 dark:bg-gray-400 ml-0.5 animate-pulse align-middle" aria-hidden />
+              )}
+            </p>
           </div>
+          <LatencyBadge latency={turn.latency} />
         </div>
       </div>
     );
@@ -27,38 +61,57 @@ function MessageBubble({ turn }) {
       </div>
 
       {/* AI turn */}
-      <div className="flex justify-start">
-        <div className="max-w-[82%]">
-          <p className="text-xs text-slate-500 dark:text-gray-500 mb-1">Voice Agent</p>
-          <div className="bg-slate-100 border border-slate-200/90 dark:bg-gray-800/85 dark:border-gray-700/50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg shadow-slate-900/5 dark:shadow-black/20">
-            <p className="text-sm text-slate-800 dark:text-gray-100 leading-relaxed">{turn.aiText}</p>
+      {(turn.aiText || isStreaming) && (
+        <div className="flex justify-start">
+          <div className="max-w-[82%]">
+            <p className="text-xs text-slate-500 dark:text-gray-500 mb-1">Voice Agent</p>
+            <div className="bg-slate-100 border border-slate-200/90 dark:bg-gray-800/85 dark:border-gray-700/50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg shadow-slate-900/5 dark:shadow-black/20">
+              <p className="text-sm text-slate-800 dark:text-gray-100 leading-relaxed">
+                {turn.aiText}
+                {isStreaming && (
+                  <span className="inline-block w-0.5 h-4 bg-slate-400 dark:bg-gray-400 ml-0.5 animate-pulse align-middle" aria-hidden />
+                )}
+              </p>
+            </div>
+            <LatencyBadge latency={turn.latency} />
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function TypingIndicator() {
+function TypingIndicator({ stage }) {
+  const label = stage === 'transcribing'
+    ? 'Transcribing…'
+    : stage === 'generating'
+    ? 'Generating reply…'
+    : 'Thinking…';
+
   return (
     <div className="flex justify-start animate-fade-in">
       <div className="bg-slate-100 border border-slate-200/90 dark:bg-gray-800/80 dark:border-gray-700/50 rounded-2xl rounded-tl-sm px-4 py-3">
-        <div className="flex gap-1 items-center h-4">
-          <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-          <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-          <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+        <div className="flex gap-2 items-center">
+          <div className="flex gap-1 items-center h-4">
+            <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
+            <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+          </div>
+          <span className="text-[10px] text-slate-400 dark:text-gray-500">{label}</span>
         </div>
       </div>
     </div>
   );
 }
 
-export default function ConversationFeed({ turns, isProcessing }) {
+export default function ConversationFeed({ turns, isProcessing, processingStage, isSpeaking }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns, isProcessing]);
+  }, [turns, isProcessing, isSpeaking]);
+
+  const lastTurnIndex = turns.length - 1;
 
   if (turns.length === 0 && !isProcessing) {
     return (
@@ -86,9 +139,14 @@ export default function ConversationFeed({ turns, isProcessing }) {
       )}
       <div className="flex-1 min-h-0 overflow-y-auto py-4 px-1 flex flex-col gap-6 custom-scrollbar">
         {turns.map((turn, i) => (
-          <MessageBubble key={i} turn={turn} />
+          <MessageBubble
+            key={i}
+            turn={turn}
+            // Show cursor while the last turn is still streaming (speaking state with no latency yet)
+            isStreaming={i === lastTurnIndex && isSpeaking && !turn.latency}
+          />
         ))}
-        {isProcessing && <TypingIndicator />}
+        {isProcessing && <TypingIndicator stage={processingStage} />}
         <div ref={bottomRef} />
       </div>
     </div>

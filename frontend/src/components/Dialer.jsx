@@ -8,6 +8,7 @@ import CallLifecycleStrip from './CallLifecycleStrip';
 
 export default function Dialer({
   status,
+  processingStage = null,
   socketReady = true,
   reconnecting = false,
   reconnectAttempt = 0,
@@ -34,6 +35,39 @@ export default function Dialer({
   stopPushToTalk,
 }) {
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const pttHeldRef = React.useRef(false);
+
+  // Space bar shortcut: tap = VAD toggle, hold = PTT record
+  useEffect(() => {
+    if (!hasLead) return;
+    const onKeyDown = (e) => {
+      if (e.code !== 'Space') return;
+      // Don't fire if user is typing in an input/textarea
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+      e.preventDefault();
+      if (isPushToTalkMode) {
+        if (!pttHeldRef.current) { pttHeldRef.current = true; startPushToTalk?.(); }
+      } else {
+        if (!isVadListening) startVad?.();
+      }
+    };
+    const onKeyUp = (e) => {
+      if (e.code !== 'Space') return;
+      if (isPushToTalkMode && pttHeldRef.current) {
+        pttHeldRef.current = false;
+        stopPushToTalk?.();
+      } else if (!isPushToTalkMode && isVadListening) {
+        pauseVad?.();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [hasLead, isPushToTalkMode, isVadListening, startVad, pauseVad, startPushToTalk, stopPushToTalk]);
   // Only show VAD errors when NOT in PTT mode (PTT is the graceful fallback for VAD failure)
   const displayError = errorMsg || (!isPushToTalkMode && vadError
     ? 'VAD Error: ' + ((vadError instanceof Error ? vadError.message : null) || 'Microphone access denied or model failed to load.')
@@ -147,7 +181,7 @@ export default function Dialer({
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <StatusBadge status={status} socketReady={socketReady} />
+          <StatusBadge status={status} socketReady={socketReady} processingStage={processingStage} />
         </div>
       </header>
 
@@ -168,7 +202,12 @@ export default function Dialer({
         </div>
 
         <div className="flex-1 min-h-[200px] flex flex-col surface-card overflow-hidden shadow-xl animate-slide-up" style={{ animationDelay: '500ms' }}>
-          <ConversationFeed turns={turns} isProcessing={status === 'processing'} />
+          <ConversationFeed
+            turns={turns}
+            isProcessing={status === 'processing'}
+            processingStage={processingStage}
+            isSpeaking={status === 'speaking'}
+          />
         </div>
 
         {vadLoading && !isPushToTalkMode && (

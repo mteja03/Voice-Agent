@@ -47,11 +47,19 @@ const STATUS_CONFIG = {
   },
 };
 
-export default function StatusBadge({ status, socketReady = true }) {
+const STAGE_HINTS = {
+  transcribing: 'Sending audio to STT…',
+  generating:   'Generating reply with AI…',
+};
+
+export default function StatusBadge({ status, socketReady = true, processingStage = null }) {
   if (!socketReady) {
     return <ConnectingBadge />;
   }
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.idle;
+  const hint = (status === 'processing' && processingStage && STAGE_HINTS[processingStage])
+    ? STAGE_HINTS[processingStage]
+    : cfg.hint;
   return (
     <div className={`inline-flex flex-col gap-1 rounded-xl border px-3 py-2 ${cfg.border} ${cfg.bg}`}>
       <div className="inline-flex items-center gap-2">
@@ -60,7 +68,7 @@ export default function StatusBadge({ status, socketReady = true }) {
           {cfg.label}
         </span>
       </div>
-      <p className="text-[10px] text-slate-600 dark:text-gray-500 max-w-[220px] leading-snug pl-4">{cfg.hint}</p>
+      <p className="text-[10px] text-slate-600 dark:text-gray-500 max-w-[220px] leading-snug pl-4">{hint}</p>
     </div>
   );
 }

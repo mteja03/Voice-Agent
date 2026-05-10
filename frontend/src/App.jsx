@@ -259,6 +259,7 @@ export default function App() {
 
   const {
     status,
+    processingStage,
     socketReady,
     reconnecting,
     reconnectAttempt,
@@ -662,6 +663,7 @@ export default function App() {
             {activeTab === 'dialer' && (
               <Dialer
                 status={status}
+                processingStage={processingStage}
                 socketReady={socketReady}
                 reconnecting={reconnecting}
                 reconnectAttempt={reconnectAttempt}

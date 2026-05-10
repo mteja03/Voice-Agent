@@ -128,51 +128,59 @@ function extractConversationFacts(messages) {
   return facts.length > 0 ? facts.join('\n') : null;
 }
 
-async function buildSystemPrompt(companyId, sessionId, transcript, leadContext, languageMode, agentName) {
-  const [projectInfo, companyInfo, agentConfig] = await Promise.all([
-    getRelevantProjectInfo(companyId, transcript),
-    getCompanyInfo(companyId),
-    getAgentConfig(companyId),
-  ]);
+/**
+ * Build the system prompt from pre-fetched data — no DB calls inside.
+ * Called by createResponseStream after all fetches are parallelised.
+ */
+function buildSystemPromptFromData({ projectInfo, companyInfo, agentConfig, recentMessages, leadContext, languageMode, agentName }) {
   const effectiveName = agentConfig?.agentName || agentConfig?.agent_name || agentName || 'Voice Agent';
   const effectiveLanguage = agentConfig?.languageMode || agentConfig?.language || languageMode || 'telugu';
   let prompt = getBaseSystemPrompt(effectiveLanguage, companyInfo, effectiveName, leadContext);
+
   if (agentConfig?.tone) {
     prompt += `\n\nTONE: ${agentConfig.tone}`;
   }
-
   if (leadContext && (leadContext.name || leadContext.notes)) {
     prompt += `\n\nLEAD RECORD (CRM): name=${leadContext.name || '—'} | notes=${leadContext.notes || '—'}`;
   }
 
-  // Extract what we already know from conversation history
-  const recentMsgs = await getRecentMessages(companyId, sessionId || 'unknown', 20);
-  const conversationFacts = extractConversationFacts(recentMsgs);
-
+  const conversationFacts = extractConversationFacts(recentMessages);
   if (conversationFacts) {
-    prompt += `\n\nWHAT WE ALREADY KNOW FROM THIS CONVERSATION:
-${conversationFacts}
-DO NOT ask about any of the above again.`;
+    prompt += `\n\nWHAT WE ALREADY KNOW FROM THIS CONVERSATION:\n${conversationFacts}\nDO NOT ask about any of the above again.`;
   }
-
   if (projectInfo) {
     prompt += `\n\nRELEVANT PROJECT DATA (Use ONLY this data for detailed pitches):\n${projectInfo}`;
   }
-
   return prompt;
 }
 
 async function createResponseStream(inputText, sessionId, companyId, leadContext, languageMode, agentName) {
   const openai = getOpenAI();
+
+  // Save user message first so it's included in the history fetch below.
   await saveMessage(companyId, sessionId, 'user', inputText);
-  const recentMessages = await getRecentMessages(companyId, sessionId, 10);
-  const systemPrompt = await buildSystemPrompt(companyId, sessionId, inputText, leadContext, languageMode, agentName);
+
+  // Parallelise ALL reads — one DB round-trip instead of three sequential calls.
+  // recentMessages is fetched once and reused for both conversation history and
+  // the WHAT WE ALREADY KNOW section (previously fetched a second time inside
+  // buildSystemPrompt, wasting ~150-250 ms every turn).
+  const [recentMessages, projectInfo, companyInfo, agentConfig] = await Promise.all([
+    getRecentMessages(companyId, sessionId, 20),
+    getRelevantProjectInfo(companyId, inputText),
+    getCompanyInfo(companyId),
+    getAgentConfig(companyId),
+  ]);
+
+  const systemPrompt = buildSystemPromptFromData({
+    projectInfo, companyInfo, agentConfig, recentMessages, leadContext, languageMode, agentName,
+  });
 
   const stream = await openai.chat.completions.create({
     model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
     messages: [
       { role: 'system', content: systemPrompt },
-      ...recentMessages.map(m => ({ role: m.role, content: m.content })),
+      // Use the same already-fetched messages — last 10 as conversation context.
+      ...recentMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
     ],
     max_tokens: Number(process.env.OPENAI_MAX_TOKENS || 100),
     temperature: 0.2,
@@ -193,8 +201,15 @@ async function generateResponseStream(transcript, sessionId, companyId, leadCont
 async function generateResponse(transcript, sessionId, companyId, leadContext = null, languageMode = 'telugu', agentName = 'Voice Agent') {
   const openai = getOpenAI();
   await saveMessage(companyId, sessionId, 'user', transcript);
-  const recentMessages = await getRecentMessages(companyId, sessionId, 10);
-  const systemPrompt = await buildSystemPrompt(companyId, sessionId, transcript, leadContext, languageMode, agentName);
+  const [recentMessages, projectInfo, companyInfo, agentConfig] = await Promise.all([
+    getRecentMessages(companyId, sessionId, 20),
+    getRelevantProjectInfo(companyId, transcript),
+    getCompanyInfo(companyId),
+    getAgentConfig(companyId),
+  ]);
+  const systemPrompt = buildSystemPromptFromData({
+    projectInfo, companyInfo, agentConfig, recentMessages, leadContext, languageMode, agentName,
+  });
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {

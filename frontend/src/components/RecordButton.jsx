@@ -205,8 +205,8 @@ export default function RecordButton({
         </p>
         <p className="text-[11px] text-slate-500 dark:text-gray-400 max-w-xs text-center leading-relaxed mt-2">
           {isPushToTalkMode
-            ? 'Hold the button while speaking, then release. Auto-send on release.'
-            : 'Tap once to start listening and play the intro; tap again to pause the microphone.'}
+            ? 'Hold button (or Space bar) while speaking, release to send.'
+            : 'Tap once to start; tap again to pause. Space bar also toggles.'}
         </p>
         {isPushToTalkMode && (
           <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 text-center">

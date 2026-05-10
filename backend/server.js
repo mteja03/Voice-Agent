@@ -473,14 +473,22 @@ io.on('connection', (socket) => {
       const shouldEndCall =
         fullAssistantMessage.includes(END_CALL_MARKER) || CLOSING_SIGNAL_REGEX.test(cleanedAssistantMessage);
       await saveMessage(companyId, sessionId, 'assistant', cleanedAssistantMessage);
-      socket.emit('response_complete', {
-        aiText: cleanedAssistantMessage,
-        shouldEndCall,
-      });
+
+      const doneAt = nowMs();
+      const toFirstAudioMs = firstAudioAtMs ? firstAudioAtMs - timingMeta.requestStartMs : null;
+
+      // Include timing breakdown so the client UI can display per-turn latency badges.
+      const latency = timingMeta ? {
+        total: Math.round(doneAt - timingMeta.requestStartMs),
+        stt:   timingMeta.sttMs        != null ? Math.round(timingMeta.sttMs)         : null,
+        llm:   timingMeta.llmFirstTokenMs != null ? Math.round(timingMeta.llmFirstTokenMs) : null,
+        tts:   Math.round(ttsTotalMs),
+        ttf:   toFirstAudioMs != null ? Math.round(toFirstAudioMs) : null,
+      } : null;
+
+      socket.emit('response_complete', { aiText: cleanedAssistantMessage, shouldEndCall, latency });
 
       if (timingMeta) {
-        const doneAt = nowMs();
-        const toFirstAudioMs = firstAudioAtMs ? firstAudioAtMs - timingMeta.requestStartMs : null;
         console.log(
           `[Latency] session=${sessionId} stt_ms=${timingMeta.sttMs ?? 'na'} llm_first_token_ms=${timingMeta.llmFirstTokenMs ?? 'na'} tts_chunks=${ttsChunks} tts_total_ms=${ttsTotalMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${(doneAt - timingMeta.requestStartMs).toFixed(1)}`
         );
