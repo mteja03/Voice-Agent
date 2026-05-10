@@ -60,7 +60,10 @@ const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 
 const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 90);
 const TTS_FLUSH_SUBSTANTIAL_MIN_CHARS = Number(process.env.TTS_FLUSH_SUBSTANTIAL_MIN_CHARS || 32);
 const END_CALL_MARKER = '[END_CALL]';
-const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
+const ALLOWED_ORIGINS = String(
+  process.env.ALLOWED_ORIGINS ||
+  'https://voice-agent-three-ecru.vercel.app,http://localhost:5173'
+)
   .split(',')
   .map((v) => v.trim())
   .filter(Boolean);
@@ -578,7 +581,7 @@ io.on('connection', (socket) => {
         const sttPromise = transcribeAudio(
           audioBuffer,
           'audio/wav',
-          sttModel || 'saaras:v3',
+          sttModel || 'saarika:v2.5',
           resolveSttLanguageCode(languageMode)
         );
         const timeoutPromise = new Promise((_, reject) =>
@@ -605,7 +608,7 @@ io.on('connection', (socket) => {
       if (transcript.length === 0) {
         console.log('[STT Fallback] Retrying with unknown lang (empty transcript)');
         try {
-          const sttPromise = transcribeAudio(audioBuffer, 'audio/wav', sttModel || 'saaras:v3', 'unknown');
+          const sttPromise = transcribeAudio(audioBuffer, 'audio/wav', sttModel || 'saarika:v2.5', 'unknown');
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
           );

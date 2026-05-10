@@ -1,10 +1,16 @@
-# Local environment files
+# Local environment files (secrets — never commit)
 .env
-.env.*
+.env.local
+.env.*.local
 frontend/.env
-frontend/.env.*
+frontend/.env.local
+frontend/.env.*.local
 backend/.env
-backend/.env.*
+backend/.env.local
+backend/.env.*.local
+
+# .env.production only contains public build-time URLs — safe to commit
+!frontend/.env.production
 
 # Dependencies/build outputs
 node_modules/
