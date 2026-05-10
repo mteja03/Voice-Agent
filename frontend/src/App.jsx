@@ -9,10 +9,10 @@ import { Skeleton } from './components/ui/Skeleton';
 const DashboardHome = lazy(() => import('./components/DashboardHome'));
 const Campaigns = lazy(() => import('./components/Campaigns'));
 const AgentConfig = lazy(() => import('./components/AgentConfig'));
-import { login, register, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
+import { login, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
 import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
-import { Building2, Loader2 } from 'lucide-react';
+import { Building2, Loader2, Mic, PhoneCall, Sparkles, ShieldCheck } from 'lucide-react';
 
 const SESSION_ID = uuidv4();
 
@@ -470,13 +470,11 @@ export default function App() {
     handleActiveLeadChange(nextLead);
   }, [activeLead, leads, handleActiveLeadChange]);
 
-  const handleAuth = useCallback(async ({ mode, email, password, companyName }) => {
+  const handleAuth = useCallback(async ({ email, password }) => {
     try {
       setAuthError('');
       setAuthLoading(true);
-      const result = mode === 'register'
-        ? await register(email, password, companyName)
-        : await login(email, password);
+      const result = await login(email, password);
       setAuthUser(result.user);
       window.location.reload();
     } catch (err) {
@@ -705,75 +703,138 @@ export default function App() {
 }
 
 function AuthScreen({ onSubmit, loading, error }) {
-  const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [companyName, setCompanyName] = useState('Voice Agent Company');
+
+  const inputClass =
+    'w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-600';
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center font-sans px-4 text-slate-900 dark:text-gray-200 overflow-hidden">
-      {/* Background Orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob dark:mix-blend-screen" />
-      <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-2000 dark:mix-blend-screen" />
-      <div className="absolute -bottom-32 left-1/2 w-96 h-96 bg-purple-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-4000 dark:mix-blend-screen" />
-      
-      <div className="surface-card relative z-10 w-full max-w-md p-8">
-        <div className="mb-4 flex justify-end">
-          <ThemeToggle />
-        </div>
-        <h1 className="mb-1 text-2xl font-semibold text-slate-900 dark:text-white">Voice Agent Login</h1>
-        <p className="mb-6 text-sm text-slate-600 dark:text-gray-400">
-          {mode === 'register' ? 'Create your tenant account' : 'Sign in to your tenant workspace'}
-        </p>
-        <form
-          className="space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSubmit({ mode, email, password, companyName });
-          }}
-        >
-          <input
-            className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-            placeholder="Email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <input
-            className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-            placeholder="Password (min 6 chars)"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={6}
-            required
-          />
-          {mode === 'register' && (
-            <input
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-              placeholder="Company Name"
-              type="text"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              required
-            />
-          )}
-          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <button
-            disabled={loading}
-            className="w-full rounded-lg bg-brand-500 py-2 font-medium text-black hover:bg-brand-400 disabled:opacity-60"
-            type="submit"
-          >
-            {loading ? 'Please wait...' : mode === 'register' ? 'Register' : 'Login'}
-          </button>
-        </form>
-        <button
-          className="mt-4 text-sm text-slate-600 hover:text-slate-900 dark:text-gray-400 dark:hover:text-gray-200"
-          onClick={() => setMode((m) => (m === 'login' ? 'register' : 'login'))}
-        >
-          {mode === 'login' ? 'New tenant? Register' : 'Have an account? Login'}
-        </button>
+    <div className="relative min-h-screen overflow-hidden bg-slate-50 font-sans text-slate-900 dark:bg-black dark:text-gray-200">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(195,70,239,0.22),transparent)] dark:bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(195,70,239,0.18),transparent)]" />
+      <div className="pointer-events-none absolute top-1/4 left-0 h-[420px] w-[420px] -translate-x-1/2 rounded-full bg-brand-500/15 blur-3xl dark:bg-brand-500/10" />
+      <div className="pointer-events-none absolute bottom-0 right-0 h-[380px] w-[380px] translate-x-1/3 rounded-full bg-indigo-500/15 blur-3xl dark:bg-indigo-500/10" />
+
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col lg:flex-row lg:items-stretch">
+        {/* Landing hero */}
+        <section className="flex flex-1 flex-col justify-center px-6 py-12 sm:px-10 lg:px-14 lg:py-16">
+          <div className="inline-flex items-center gap-2 rounded-full border border-brand-500/25 bg-brand-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">
+            <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            Voice Agent
+          </div>
+          <h1 className="mt-6 max-w-xl text-4xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-5xl">
+            AI voice outreach that sounds natural
+          </h1>
+          <p className="mt-4 max-w-lg text-base leading-relaxed text-slate-600 dark:text-gray-400 sm:text-lg">
+            Run outbound campaigns, manage leads, and measure outcomes—all from one workspace built for real phone conversations.
+          </p>
+          <ul className="mt-10 max-w-md space-y-4 text-sm text-slate-700 dark:text-gray-300">
+            <li className="flex gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400">
+                <Mic className="h-5 w-5" aria-hidden />
+              </span>
+              <span>
+                <span className="font-semibold text-slate-900 dark:text-white">Speech-to-text &amp; voice replies</span>
+                <span className="mt-0.5 block text-slate-600 dark:text-gray-500">
+                  Natural flow with interrupt-friendly playback and session-aware turns.
+                </span>
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-600 dark:bg-indigo-400/90 dark:text-indigo-200">
+                <PhoneCall className="h-5 w-5" aria-hidden />
+              </span>
+              <span>
+                <span className="font-semibold text-slate-900 dark:text-white">Campaigns &amp; dialer in one place</span>
+                <span className="mt-0.5 block text-slate-600 dark:text-gray-500">
+                  Import leads, pick who to call next, and stay in rhythm with your list.
+                </span>
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/80 dark:text-emerald-100">
+                <ShieldCheck className="h-5 w-5" aria-hidden />
+              </span>
+              <span>
+                <span className="font-semibold text-slate-900 dark:text-white">Workspace sign-in</span>
+                <span className="mt-0.5 block text-slate-600 dark:text-gray-500">
+                  Access is limited to invited team accounts—sign in with your organization credentials.
+                </span>
+              </span>
+            </li>
+          </ul>
+        </section>
+
+        {/* Login panel */}
+        <section className="flex flex-1 flex-col justify-center px-4 pb-14 pt-4 sm:px-8 lg:max-w-[480px] lg:border-l lg:border-slate-200/80 lg:pb-16 lg:pt-12 xl:max-w-[520px] dark:lg:border-gray-800/80">
+          <div className="surface-card mx-auto w-full max-w-md rounded-3xl p-8 shadow-xl shadow-slate-900/5 dark:shadow-black/40">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white">
+                  Voice Agent Login
+                </h2>
+                <p className="mt-1 text-sm text-slate-600 dark:text-gray-400">
+                  Sign in to your tenant workspace
+                </p>
+              </div>
+              <ThemeToggle />
+            </div>
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onSubmit({ email, password });
+              }}
+            >
+              <div>
+                <label htmlFor="auth-email" className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-gray-400">
+                  Email
+                </label>
+                <input
+                  id="auth-email"
+                  className={inputClass}
+                  placeholder="you@company.com"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="auth-password" className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-gray-400">
+                  Password
+                </label>
+                <input
+                  id="auth-password"
+                  className={inputClass}
+                  placeholder="Password (min 6 chars)"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  minLength={6}
+                  required
+                />
+              </div>
+              {error && (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+                  {error}
+                </p>
+              )}
+              <button
+                disabled={loading}
+                className="flex h-12 w-full items-center justify-center rounded-xl bg-brand-600 text-sm font-semibold text-white shadow-lg shadow-brand-600/25 transition-colors hover:bg-brand-500 disabled:opacity-60 motion-safe:transition-colors dark:shadow-brand-900/30"
+                type="submit"
+              >
+                {loading ? 'Signing in…' : 'Login'}
+              </button>
+            </form>
+            <p className="mt-6 text-center text-xs leading-relaxed text-slate-500 dark:text-gray-500">
+              Need an account? Contact your workspace administrator—public registration is not available from this screen.
+            </p>
+          </div>
+        </section>
       </div>
     </div>
   );
