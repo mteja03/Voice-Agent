@@ -20,7 +20,7 @@ const SARVAM_STT_URL = 'https://api.sarvam.ai/speech-to-text';
 async function transcribeAudio(
   audioBuffer,
   mimetype = 'audio/wav',
-  model = 'saaras:v3',
+  model = 'saarika:v2.5',
   languageCode = 'te-IN'
 ) {
   const ext = mimetype.includes('wav') ? 'wav'

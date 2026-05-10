@@ -7,9 +7,9 @@ const router = express.Router();
 
 const DEFAULT_AGENT_CONFIG = {
   agentName: 'Voice Agent',
-  ttsVoice: 'aditya',
+  ttsVoice: 'shubh',
   ttsModel: 'bulbul:v3',
-  sttModel: 'saaras:v3',
+  sttModel: 'saarika:v2.5',
   languageMode: 'telugu',
   autoEndCall: true,
   introTemplate:

@@ -35,7 +35,7 @@ router.post(
       return sendError(res, 400, 'sessionId is required');
     }
 
-    const sttModel = req.body.sttModel || 'saaras:v3';
+    const sttModel = req.body.sttModel || 'saarika:v2.5';
     const ttsProvider = req.body.ttsProvider || 'sarvam';
     const ttsModel = req.body.ttsModel || 'bulbul:v3';
     const ttsVoice = req.body.ttsVoice || 'shubh';

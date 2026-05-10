@@ -55,10 +55,10 @@ function TabRouteFallback() {
 
 const DEFAULT_SETTINGS = {
   agentName: 'Voice Agent',
-  sttModel: 'saaras:v3',
+  sttModel: 'saarika:v2.5',
   ttsProvider: 'sarvam',
   ttsModel: 'bulbul:v3',
-  ttsVoice: 'aditya',
+  ttsVoice: 'shubh',
   languageMode: 'telugu',
   autoEndCall: true,
   introTemplate: 'హలో {leadName} గారు, నేను {agentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?',
@@ -84,14 +84,15 @@ function loadSettings() {
       || localStorage.getItem(LEGACY_LS_KEYS.settings);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed.sttModel === 'saarika:v2.5') parsed.sttModel = 'saaras:v3';
-      if (parsed.ttsModel === 'bulbul:v2') parsed.ttsModel = 'bulbul:v3';
+      // Migrate deprecated model names → current supported values
+      if (parsed.sttModel === 'saaras:v3' || parsed.sttModel === 'saarika:v2') parsed.sttModel = 'saarika:v2.5';
+      if (parsed.ttsModel === 'bulbul:v1' || parsed.ttsModel === 'bulbul:v2') parsed.ttsModel = 'bulbul:v3';
       if (!parsed.agentName) parsed.agentName = 'Voice Agent';
       if (parsed.introTemplate && !parsed.introTemplate.includes('{agentName}')) {
         parsed.introTemplate = parsed.introTemplate.replace('SB Ventures', '{agentName}');
       }
       const validVoices = ['aditya', 'ritu', 'ashutosh', 'priya', 'neha', 'rahul', 'pooja', 'rohan', 'simran', 'kavya', 'amit', 'dev', 'ishita', 'shreya', 'ratan', 'varun', 'manan', 'sumit', 'roopa', 'kabir', 'aayan', 'shubh', 'advait', 'anand', 'tanya', 'tarun', 'sunny', 'mani', 'gokul', 'vijay', 'shruti', 'suhani', 'mohit', 'kavitha', 'rehan', 'soham', 'rupali', 'niharika'];
-      if (!validVoices.includes(parsed.ttsVoice)) parsed.ttsVoice = 'aditya';
+      if (!validVoices.includes(parsed.ttsVoice)) parsed.ttsVoice = 'shubh';
       return { ...DEFAULT_SETTINGS, ...parsed };
     }
     return DEFAULT_SETTINGS;

@@ -331,9 +331,9 @@ function normalizeAgentConfig(row) {
   return {
     ...settingsExtras,
     agentName: row.agent_name || s.agentName || 'Voice Agent',
-    ttsVoice: s.ttsVoice || 'aditya',
+    ttsVoice: s.ttsVoice || 'shubh',
     ttsModel: s.ttsModel || 'bulbul:v3',
-    sttModel: s.sttModel || 'saaras:v3',
+    sttModel: s.sttModel || 'saarika:v2.5',
     ttsProvider: s.ttsProvider || 'sarvam',
     autoEndCall: s.autoEndCall !== undefined ? s.autoEndCall : true,
     languageMode: row.language || s.languageMode || 'telugu',
@@ -366,9 +366,9 @@ async function upsertAgentConfig(companyId, payload) {
 
   const settings = {
     ...prevSettings,
-    ttsVoice: payload.ttsVoice || prevSettings.ttsVoice || 'aditya',
+    ttsVoice: payload.ttsVoice || prevSettings.ttsVoice || 'shubh',
     ttsModel: payload.ttsModel || prevSettings.ttsModel || 'bulbul:v3',
-    sttModel: payload.sttModel || prevSettings.sttModel || 'saaras:v3',
+    sttModel: payload.sttModel || prevSettings.sttModel || 'saarika:v2.5',
     ttsProvider: payload.ttsProvider || prevSettings.ttsProvider || 'sarvam',
     autoEndCall:
       payload.autoEndCall !== undefined

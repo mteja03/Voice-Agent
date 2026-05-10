@@ -169,12 +169,12 @@ async function createResponseStream(inputText, sessionId, companyId, leadContext
   const systemPrompt = await buildSystemPrompt(companyId, sessionId, inputText, leadContext, languageMode, agentName);
 
   const stream = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
     messages: [
       { role: 'system', content: systemPrompt },
       ...recentMessages.map(m => ({ role: m.role, content: m.content })),
     ],
-    max_tokens: 64,
+    max_tokens: Number(process.env.OPENAI_MAX_TOKENS || 100),
     temperature: 0.2,
     stream: true,
   });
@@ -199,12 +199,12 @@ async function generateResponse(transcript, sessionId, companyId, leadContext = 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
         ],
-        max_tokens: 64,
+        max_tokens: Number(process.env.OPENAI_MAX_TOKENS || 100),
         temperature: 0.2,
       });
       const text = response.choices[0]?.message?.content?.trim() || '';

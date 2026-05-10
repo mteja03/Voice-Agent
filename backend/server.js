@@ -55,10 +55,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const { OPENAI_API_KEY, SARVAM_API_KEY } = process.env;
 // Defaults match .env.example so local (with example) and Railway (no overrides) behave the same.
-const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 8);
-const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 24);
-const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 90);
-const TTS_FLUSH_SUBSTANTIAL_MIN_CHARS = Number(process.env.TTS_FLUSH_SUBSTANTIAL_MIN_CHARS || 32);
+const TTS_FIRST_CHUNK_MIN_CHARS = Number(process.env.TTS_FIRST_CHUNK_MIN_CHARS || 20);
+const TTS_NEXT_CHUNK_MIN_CHARS = Number(process.env.TTS_NEXT_CHUNK_MIN_CHARS || 30);
+const TTS_CHUNK_MAX_CHARS = Number(process.env.TTS_CHUNK_MAX_CHARS || 100);
+const TTS_FLUSH_SUBSTANTIAL_MIN_CHARS = Number(process.env.TTS_FLUSH_SUBSTANTIAL_MIN_CHARS || 20);
 const END_CALL_MARKER = '[END_CALL]';
 const ALLOWED_ORIGINS = String(
   process.env.ALLOWED_ORIGINS ||
@@ -219,7 +219,8 @@ function splitForTts(buffer, isFirstChunk) {
   if (!text) return null;
 
   const window = text.slice(0, Math.min(text.length, maxChars));
-  const punctuationMatches = [...window.matchAll(/[.!?।\n]/g)];
+  // Include Telugu danda (।), full-stop variants, comma for clause splitting
+  const punctuationMatches = [...window.matchAll(/[.!?।।॥\n]/g)];
   const firstPunctuationIdx = punctuationMatches.length ? punctuationMatches[0].index : -1;
   const lastPunctuationIdx = punctuationMatches.length
     ? punctuationMatches[punctuationMatches.length - 1].index
