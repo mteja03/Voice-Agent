@@ -2,12 +2,12 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { v4 as uuidv4 } from 'uuid';
 import { useVoiceAgent } from './hooks/useVoiceAgent';
 import Sidebar from './components/Sidebar';
+import Dialer from './components/Dialer';
 import ThemeToggle from './components/ThemeToggle';
 import { Skeleton } from './components/ui/Skeleton';
 
 const DashboardHome = lazy(() => import('./components/DashboardHome'));
 const Campaigns = lazy(() => import('./components/Campaigns'));
-const Dialer = lazy(() => import('./components/Dialer'));
 const AgentConfig = lazy(() => import('./components/AgentConfig'));
 import { login, register, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
@@ -331,7 +331,6 @@ export default function App() {
     const loaders = {
       dashboard: () => import('./components/DashboardHome'),
       campaigns: () => import('./components/Campaigns'),
-      dialer: () => import('./components/Dialer'),
       'agent-config': () => import('./components/AgentConfig'),
     };
     const fn = loaders[tabId];
@@ -635,7 +634,7 @@ export default function App() {
           </div>
         )}
 
-        <main className="relative surface-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="relative surface-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0">
           <Suspense fallback={<TabRouteFallback />}>
             {activeTab === 'dashboard' && (
               <DashboardHome

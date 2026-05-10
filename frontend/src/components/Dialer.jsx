@@ -37,6 +37,10 @@ export default function Dialer({
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const pttHeldRef = React.useRef(false);
 
+  // Declare hasLead early so the useEffect dependency array below can reference it
+  // without hitting the temporal dead zone (const TDZ error).
+  const hasLead = Boolean(activeLead);
+
   // Space bar shortcut: tap = VAD toggle, hold = PTT record
   useEffect(() => {
     if (!hasLead) return;
@@ -76,7 +80,6 @@ export default function Dialer({
     Boolean(errorMsg) &&
     /connect|backend|Disconnected|Unable to connect|Reconnecting/i.test(errorMsg);
   const activeLeadIndex = activeLead ? leads.findIndex((lead) => lead.id === activeLead.id) : -1;
-  const hasLead = Boolean(activeLead);
 
   useEffect(() => {
     if (!endConfirmOpen) return;
@@ -100,12 +103,12 @@ export default function Dialer({
 
   if (!hasLead) {
     return (
-      <div className="flex-1 flex flex-col h-full min-h-0 bg-transparent">
-        <header className="flex-shrink-0 px-6 sm:px-8 py-6 border-b border-white/10 dark:border-white/5 animate-slide-up" style={{ animationDelay: '300ms' }}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden bg-transparent">
+        <header className="motion-safe:animate-slide-up flex-shrink-0 border-b border-white/10 px-6 py-6 dark:border-white/5 motion-reduce:translate-y-0 motion-reduce:opacity-100 motion-reduce:animate-none" style={{ animationDelay: '300ms' }}>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Active Call</h1>
           <p className="text-sm text-slate-600 dark:text-gray-400 mt-1">Choose someone to call from your campaign list.</p>
         </header>
-        <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 max-w-md mx-auto text-center">
+        <div className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-gray-800 flex items-center justify-center mb-5 text-slate-500 dark:text-gray-500">
             <Users className="w-8 h-8" aria-hidden />
           </div>
@@ -131,7 +134,7 @@ export default function Dialer({
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 bg-transparent">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden bg-transparent">
       {endConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
           <button
@@ -173,7 +176,7 @@ export default function Dialer({
         </div>
       )}
 
-      <header className="flex-shrink-0 px-6 sm:px-8 py-6 border-b border-white/10 dark:border-white/5 flex items-center justify-between gap-4 animate-slide-up" style={{ animationDelay: '300ms' }}>
+      <header className="motion-safe:animate-slide-up flex shrink-0 items-center justify-between gap-4 border-b border-white/10 px-6 py-6 dark:border-white/5 sm:px-8 motion-reduce:translate-y-0 motion-reduce:opacity-100 motion-reduce:animate-none" style={{ animationDelay: '300ms' }}>
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Active Call</h1>
           <p className="text-sm text-slate-600 dark:text-gray-400 mt-1">
@@ -185,7 +188,7 @@ export default function Dialer({
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col min-h-0 max-w-3xl mx-auto w-full px-4 sm:px-8 py-4 sm:py-6 gap-3">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4 min-h-0 sm:px-8 sm:py-6">
         <CallLifecycleStrip
           socketReady={socketReady}
           vadLoading={vadLoading}
@@ -201,7 +204,10 @@ export default function Dialer({
           <ActiveLeadCard lead={activeLead} leadIndex={Math.max(activeLeadIndex, 0)} totalLeads={leads.length} />
         </div>
 
-        <div className="flex-1 min-h-[200px] flex flex-col surface-card overflow-hidden shadow-xl animate-slide-up" style={{ animationDelay: '500ms' }}>
+        <div
+          className="surface-card motion-safe:animate-slide-up flex min-h-[200px] flex-1 flex-col overflow-hidden shadow-xl motion-reduce:translate-y-0 motion-reduce:opacity-100 motion-reduce:animate-none"
+          style={{ animationDelay: '500ms' }}
+        >
           <ConversationFeed
             turns={turns}
             isProcessing={status === 'processing'}

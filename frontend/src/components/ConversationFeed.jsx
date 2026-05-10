@@ -106,14 +106,15 @@ function TypingIndicator({ stage }) {
 
 export default function ConversationFeed({ turns, isProcessing, processingStage, isSpeaking }) {
   const bottomRef = useRef(null);
+  const safeTurns = Array.isArray(turns) ? turns : [];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns, isProcessing, isSpeaking]);
+  }, [safeTurns, isProcessing, isSpeaking]);
 
-  const lastTurnIndex = turns.length - 1;
+  const lastTurnIndex = safeTurns.length - 1;
 
-  if (turns.length === 0 && !isProcessing) {
+  if (safeTurns.length === 0 && !isProcessing) {
     return (
       <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4 text-center py-12 px-3">
         <div className="w-16 h-16 rounded-full bg-slate-200/90 border border-slate-300/80 dark:bg-gray-800/80 dark:border-gray-700/60 flex items-center justify-center">
@@ -132,13 +133,13 @@ export default function ConversationFeed({ turns, isProcessing, processingStage,
 
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full">
-      {turns.length > 0 && (
+      {safeTurns.length > 0 && (
         <div className="flex-shrink-0 px-3 pt-3 pb-2 text-[11px] text-slate-600 dark:text-gray-500 border-b border-slate-200/80 dark:border-gray-800/50">
           Live conversation
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto py-4 px-1 flex flex-col gap-6 custom-scrollbar">
-        {turns.map((turn, i) => (
+        {safeTurns.map((turn, i) => (
           <MessageBubble
             key={i}
             turn={turn}
