@@ -30,8 +30,9 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      # Only Chromium is installed above. Firefox/mobile/API need extra browsers or a live backend.
       - name: Run Playwright tests
-        run: npm run test:e2e
+        run: npx playwright test --project=chromium
 
       - name: Upload Playwright report
         if: always()
