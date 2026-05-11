@@ -1,9 +1,10 @@
-import { LayoutDashboard, Users, Settings, Phone } from 'lucide-react';
+import { LayoutDashboard, Megaphone, Settings, Phone, UserCog } from 'lucide-react';
 
-export default function Sidebar({ activeTab, onTabChange, onTabHover }) {
+export default function Sidebar({ activeTab, onTabChange, onTabHover, canManageUsers }) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'campaigns', label: 'Campaigns', icon: Users },
+    { id: 'campaigns', label: 'Campaigns', icon: Megaphone },
+    ...(canManageUsers ? [{ id: 'team', label: 'Team', icon: UserCog }] : []),
     { id: 'dialer', label: 'Dialer', icon: Phone },
     { id: 'agent-config', label: 'Agent Config', icon: Settings },
   ];

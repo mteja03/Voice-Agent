@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { authenticateSession } from './helpers/auth.js';
 
 test.beforeEach(async ({ page }) => {
-  await authenticateSession(page);
+  await authenticateSession(page, { mockSocket: true });
 });
 
 test('navigation switches between main tabs', async ({ page }) => {

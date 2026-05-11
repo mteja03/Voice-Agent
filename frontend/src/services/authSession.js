@@ -40,6 +40,7 @@ export function notifyAuthInvalid() {
   window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT));
 }
 
+/** True when the session or credentials are invalid (clear login). Not used for 403 (forbidden / insufficient permission). */
 export function isAuthFailureStatus(status) {
-  return status === 401 || status === 403;
+  return status === 401;
 }

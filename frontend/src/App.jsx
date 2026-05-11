@@ -9,6 +9,7 @@ import { Skeleton } from './components/ui/Skeleton';
 const DashboardHome = lazy(() => import('./components/DashboardHome'));
 const Campaigns = lazy(() => import('./components/Campaigns'));
 const AgentConfig = lazy(() => import('./components/AgentConfig'));
+const UserManagement = lazy(() => import('./components/UserManagement'));
 import { login, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
 import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
@@ -19,6 +20,7 @@ const SESSION_ID = uuidv4();
 const APP_TAB_HEADINGS = {
   dashboard: { title: 'Dashboard', subtitle: 'Performance, calls, and outcomes' },
   campaigns: { title: 'Campaigns', subtitle: 'Lead lists and imports' },
+  team: { title: 'Team', subtitle: 'Members and access for this workspace' },
   dialer: { title: 'Dialer', subtitle: 'Voice sessions' },
   'agent-config': { title: 'Agent configuration', subtitle: 'Voice, language, and prompts' },
 };
@@ -323,6 +325,16 @@ export default function App() {
       });
   }, [authUser?.activeCompanyId]);
 
+  const canManageUsers = useMemo(
+    () => Boolean(authUser?.isMasterAdmin || authUser?.role === 'tenant_admin'),
+    [authUser]
+  );
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (activeTab === 'team' && !canManageUsers) setActiveTab('dashboard');
+  }, [authUser, activeTab, canManageUsers]);
+
   const handleTabChange = useCallback((tabId) => {
     setActiveTab(tabId);
   }, []);
@@ -331,6 +343,7 @@ export default function App() {
     const loaders = {
       dashboard: () => import('./components/DashboardHome'),
       campaigns: () => import('./components/Campaigns'),
+      team: () => import('./components/UserManagement'),
       'agent-config': () => import('./components/AgentConfig'),
     };
     const fn = loaders[tabId];
@@ -529,7 +542,12 @@ export default function App() {
 
   return (
     <div className="motion-safe:transition-colors motion-safe:duration-200 flex h-screen w-full overflow-hidden font-sans antialiased text-slate-900 dark:text-gray-200">
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onTabHover={prefetchTab} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        onTabHover={prefetchTab}
+        canManageUsers={canManageUsers}
+      />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pr-4 lg:pr-6 py-4 lg:py-6 gap-4 lg:gap-6">
         <header
@@ -655,6 +673,14 @@ export default function App() {
                 onLeadsChange={handleLeadsChange}
                 onActiveLeadChange={handleActiveLeadChange}
                 onNavigateToDialer={() => setActiveTab('dialer')}
+              />
+            )}
+            {activeTab === 'team' && canManageUsers && (
+              <UserManagement
+                activeCompanyId={authUser?.activeCompanyId}
+                tenants={tenants}
+                isMasterAdmin={Boolean(authUser?.isMasterAdmin)}
+                tenantsLoading={tenantsLoading}
               />
             )}
             {activeTab === 'dialer' && (

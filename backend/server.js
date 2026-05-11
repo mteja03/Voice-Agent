@@ -33,6 +33,7 @@ const knowledgeBaseRouter = require('./routes/knowledgeBase');
 const analyticsRouter = require('./routes/analytics');
 const agentConfigRouter = require('./routes/agentConfig');
 const tenantsRouter = require('./routes/tenants');
+const usersRouter = require('./routes/users');
 const { authMiddleware } = require('./middleware/auth');
 const { requireCompanyId } = require('./middleware/tenant');
 const { requestIdMiddleware } = require('./middleware/requestContext');
@@ -102,6 +103,7 @@ app.use('/api', authMiddleware, verifyUserContext, requireCompanyId, conversatio
 app.use('/api/kb', authMiddleware, verifyUserContext, requireCompanyId, knowledgeBaseRouter);
 app.use('/api/analytics', authMiddleware, verifyUserContext, requireCompanyId, analyticsRouter);
 app.use('/api/agent-config', authMiddleware, verifyUserContext, requireCompanyId, agentConfigRouter);
+app.use('/api/users', authMiddleware, verifyUserContext, requireCompanyId, usersRouter);
 
 app.get('/', (req, res) => {
   res.send('Server is running');

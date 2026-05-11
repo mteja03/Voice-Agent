@@ -31,10 +31,16 @@ export async function apiFetch(url, options = {}) {
     }
   }
 
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     if (!skipAuth) notifyAuthInvalid();
     throw new Error(
       (data && typeof data.error === 'string' && data.error) || 'Unauthorized'
+    );
+  }
+
+  if (res.status === 403) {
+    throw new Error(
+      (data && typeof data.error === 'string' && data.error) || 'You do not have permission to do that'
     );
   }
 
