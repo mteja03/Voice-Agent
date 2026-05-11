@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const { getRelevantProjectInfo, getCompanyInfo } = require('./knowledgeBase');
 const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./templatePlaceholders');
 const { saveMessage, getRecentMessages, getSessionMessages, clearSessionDb, getAgentConfig } = require('./db');
+const callRecording = require('./callRecording');
 const { safeClientMessage } = require('../utils/sanitize');
 const { logger } = require('../utils/logger');
 
@@ -142,6 +143,22 @@ function buildSystemPromptFromData({ projectInfo, companyInfo, agentConfig, rece
   }
   if (leadContext && (leadContext.name || leadContext.notes)) {
     prompt += `\n\nLEAD RECORD (CRM): name=${leadContext.name || '—'} | notes=${leadContext.notes || '—'}`;
+  }
+  if (leadContext?.questionnaire?.name) {
+    const questions = Array.isArray(leadContext.questionnaire.questions)
+      ? leadContext.questionnaire.questions
+      : [];
+    const renderedQuestions = questions
+      .map((q, idx) => {
+        const options = Array.isArray(q.options) && q.options.length
+          ? ` Options: ${q.options.join(' | ')}.`
+          : '';
+        return `${idx + 1}. ${q.prompt}${options}`;
+      })
+      .join('\n');
+    if (renderedQuestions) {
+      prompt += `\n\nCAMPAIGN QUESTIONNAIRE: ${leadContext.questionnaire.name}\nUse these as discovery prompts during the call. Ask naturally and avoid repeating already answered items.\n${renderedQuestions}`;
+    }
   }
 
   const conversationFacts = extractConversationFacts(recentMessages);
@@ -337,6 +354,7 @@ Rules:
  * Clears the conversation history for a session
  */
 async function clearSession(companyId, sessionId) {
+  callRecording.discard(companyId, sessionId);
   await clearSessionDb(companyId, sessionId);
 }
 

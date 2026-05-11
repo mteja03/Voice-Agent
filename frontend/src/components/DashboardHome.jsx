@@ -1,5 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Users, PhoneCall, CheckCircle2, TrendingUp, Clock, Activity, BarChart3, Phone } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Users,
+  PhoneCall,
+  CheckCircle2,
+  TrendingUp,
+  Clock,
+  Activity,
+  BarChart3,
+  Phone,
+  Search,
+  RefreshCw,
+} from 'lucide-react';
 import {
   AreaChart,
   Area,
@@ -14,8 +25,10 @@ import {
   Legend,
 } from 'recharts';
 import { apiFetch, BACKEND_URL } from '../services/apiFetch';
+import { listRecentCalls } from '../services/callsApi';
 import { useTheme } from '../context/ThemeContext';
 import { Skeleton } from './ui/Skeleton';
+import CallRecordingPair from './CallRecordingPair';
 
 const PIE_COLORS = ['#c346ef', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6b7280'];
 
@@ -97,11 +110,22 @@ function DashboardSkeleton() {
   );
 }
 
+function formatCallWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export default function DashboardHome({ leads, activeCampaignName, onNavigateCampaigns, onNavigateDialer }) {
   const { theme } = useTheme();
   const [analytics, setAnalytics] = useState(null);
+  const [recentCalls, setRecentCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState(null);
+  const [recordingsFilter, setRecordingsFilter] = useState('all');
+  const [recordingsSearch, setRecordingsSearch] = useState('');
+  const [recordingsLoading, setRecordingsLoading] = useState(false);
 
   const chartUi = useMemo(() => {
     const isDark = theme === 'dark';
@@ -114,22 +138,50 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
     };
   }, [theme]);
 
+  const loadDashboard = useCallback(async (setInitialLoading = false) => {
+    if (setInitialLoading) setLoading(true);
+    else setRecordingsLoading(true);
+    try {
+      const [analyticsData, callsRows] = await Promise.all([
+        apiFetch(`${BACKEND_URL}/api/analytics`),
+        listRecentCalls(20).catch(() => []),
+      ]);
+      setAnalytics(analyticsData);
+      setRecentCalls(Array.isArray(callsRows) ? callsRows : []);
+      setFetchedAt(new Date());
+    } catch (err) {
+      console.error('Failed to fetch analytics', err);
+      setAnalytics(null);
+      setRecentCalls([]);
+    } finally {
+      if (setInitialLoading) setLoading(false);
+      else setRecordingsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    apiFetch(`${BACKEND_URL}/api/analytics`)
-      .then((data) => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [analyticsData, callsRows] = await Promise.all([
+          apiFetch(`${BACKEND_URL}/api/analytics`),
+          listRecentCalls(20).catch(() => []),
+        ]);
         if (cancelled) return;
-        setAnalytics(data);
+        setAnalytics(analyticsData);
+        setRecentCalls(Array.isArray(callsRows) ? callsRows : []);
         setFetchedAt(new Date());
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error('Failed to fetch analytics', err);
-        if (!cancelled) setAnalytics(null);
-      })
-      .finally(() => {
+        if (!cancelled) {
+          setAnalytics(null);
+          setRecentCalls([]);
+        }
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -159,6 +211,25 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
   const updatedLabel = fetchedAt
     ? `Updated ${fetchedAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
     : null;
+
+  const callsWithRecordings = useMemo(
+    () => recentCalls.filter((c) => c.recordingUserUrl || c.recordingAgentUrl),
+    [recentCalls]
+  );
+
+  const filteredRecordingCalls = useMemo(() => {
+    const q = recordingsSearch.trim().toLowerCase();
+    return callsWithRecordings.filter((c) => {
+      if (recordingsFilter !== 'all' && String(c.outcome || 'unknown') !== recordingsFilter) {
+        return false;
+      }
+      if (!q) return true;
+      const outcome = String(c.outcome || '').toLowerCase();
+      const when = formatCallWhen(c.createdAt).toLowerCase();
+      const duration = `${Math.floor((c.duration || 0) / 60)}m ${(c.duration || 0) % 60}s`.toLowerCase();
+      return outcome.includes(q) || when.includes(q) || duration.includes(q);
+    });
+  }, [callsWithRecordings, recordingsFilter, recordingsSearch]);
 
   if (loading) {
     return <DashboardSkeleton />;
@@ -332,6 +403,109 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
                 )}
               </div>
             </div>
+          </div>
+
+          <div className="surface-card p-6 animate-slide-up" style={{ animationDelay: '650ms' }}>
+            <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Call recordings</h2>
+              <p className="text-xs text-slate-500 dark:text-gray-500">
+                Both tracks are grouped per call. Links expire in about an hour; refresh for new signed URLs. If playback shows an error, use Download or confirm the Storage bucket and file paths in Supabase.
+              </p>
+            </div>
+            <div className="mb-3 rounded-xl border border-slate-200/90 bg-white/80 p-3 dark:border-gray-800 dark:bg-gray-900/50">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { id: 'all', label: 'All' },
+                    { id: 'interested', label: 'Interested' },
+                    { id: 'follow_up', label: 'Follow up' },
+                    { id: 'not_interested', label: 'Not interested' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setRecordingsFilter(opt.id)}
+                      className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                        recordingsFilter === opt.id
+                          ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300'
+                          : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400 dark:text-gray-500" />
+                    <input
+                      value={recordingsSearch}
+                      onChange={(e) => setRecordingsSearch(e.target.value)}
+                      placeholder="Search recordings"
+                      className="w-52 rounded-lg border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-xs text-slate-700 outline-none focus:border-brand-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => loadDashboard(false)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    disabled={recordingsLoading}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${recordingsLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 text-xs text-slate-500 dark:text-gray-400">
+                Showing {filteredRecordingCalls.length} of {callsWithRecordings.length} recordings
+              </div>
+            </div>
+            {callsWithRecordings.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-200/90 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-600 dark:border-gray-700/80 dark:bg-gray-900/40 dark:text-gray-400">
+                No recordings yet. Finish a call from the Dialer (end session) to save audio here. Ensure the Supabase Storage bucket <code className="rounded bg-slate-200/80 px-1 dark:bg-gray-800">call-recordings</code> exists.
+              </p>
+            ) : filteredRecordingCalls.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-200/90 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-600 dark:border-gray-700/80 dark:bg-gray-900/40 dark:text-gray-400">
+                No recordings match your current filter or search.
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200/80 dark:border-gray-800/80">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200/80 text-xs uppercase tracking-wide text-slate-500 dark:border-gray-800 dark:text-gray-500">
+                      <th className="px-4 py-3 font-medium">When</th>
+                      <th className="px-4 py-3 font-medium">Outcome</th>
+                      <th className="px-4 py-3 font-medium">Duration</th>
+                      <th className="min-w-[280px] px-4 py-3 font-medium">Recordings</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRecordingCalls.map((c) => (
+                        <tr
+                          key={c.id}
+                          className="border-b border-slate-100 dark:border-gray-800/80 last:border-0"
+                        >
+                          <td className="px-4 py-3 align-top text-slate-800 dark:text-gray-200">{formatCallWhen(c.createdAt)}</td>
+                          <td className="px-4 py-3 align-top capitalize text-slate-700 dark:text-gray-300">
+                            {(c.outcome || 'unknown').replace(/_/g, ' ')}
+                          </td>
+                          <td className="px-4 py-3 align-top text-slate-600 dark:text-gray-400">
+                            {Math.floor((c.duration || 0) / 60)}m {(c.duration || 0) % 60}s
+                          </td>
+                          <td className="px-4 py-3 align-top">
+                            <CallRecordingPair
+                              density="compact"
+                              sticky={false}
+                              userUrl={c.recordingUserUrl}
+                              agentUrl={c.recordingAgentUrl}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

@@ -10,7 +10,15 @@ import {
   Plus,
   Pencil,
   Download,
+  Eye,
+  X,
+  Loader2,
+  Copy,
+  RefreshCw,
 } from 'lucide-react';
+import { listQuestionnaires } from '../services/questionnairesApi';
+import { listLeadCallHistory } from '../services/callsApi';
+import CallRecordingPair from './CallRecordingPair';
 
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D/g, '');
@@ -61,6 +69,42 @@ function outcomeBadgeClass(outcome) {
   }
 }
 
+function formatCallDuration(seconds) {
+  const total = Math.max(0, Number(seconds) || 0);
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+function callMatchesHistoryFilter(call, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'has_recording') return Boolean(call.recordingUserUrl || call.recordingAgentUrl);
+  if (filter === 'has_transcript') return Array.isArray(call.transcript) && call.transcript.length > 0;
+  return String(call.outcome || 'unknown') === filter;
+}
+
+async function copyToClipboard(text) {
+  if (!text) return false;
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const temp = document.createElement('textarea');
+  temp.value = text;
+  temp.style.position = 'fixed';
+  temp.style.opacity = '0';
+  document.body.appendChild(temp);
+  temp.focus();
+  temp.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  } finally {
+    document.body.removeChild(temp);
+  }
+  return ok;
+}
+
 export default function Campaigns({
   campaigns,
   activeCampaignId,
@@ -68,6 +112,7 @@ export default function Campaigns({
   onCreateCampaign,
   onRenameCampaign,
   onDeleteCampaign,
+  onSetCampaignQuestionnaire,
   leads,
   activeLead,
   onLeadsChange,
@@ -83,6 +128,15 @@ export default function Campaigns({
   const [newCampaignOpen, setNewCampaignOpen] = useState(false);
   const [newCampaignName, setNewCampaignName] = useState('');
   const [csvDragActive, setCsvDragActive] = useState(false);
+  const [questionnaires, setQuestionnaires] = useState([]);
+  const [historyLead, setHistoryLead] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyCalls, setHistoryCalls] = useState([]);
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyFocusIndex, setHistoryFocusIndex] = useState(0);
+  const [copyFeedback, setCopyFeedback] = useState('');
   const fileInputRef = useRef(null);
 
   const hasLeads = leads.length > 0;
@@ -101,6 +155,20 @@ export default function Campaigns({
   useEffect(() => {
     setSelectedIds(new Set());
   }, [activeFilter, searchQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listQuestionnaires()
+      .then((rows) => {
+        if (!cancelled) setQuestionnaires(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setQuestionnaires([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCampaignId]);
 
   const processCsvText = (text) => {
     setError('');
@@ -264,6 +332,75 @@ export default function Campaigns({
     onNavigateToDialer();
   };
 
+  const openHistory = async (lead) => {
+    setHistoryLead(lead);
+    setHistoryLoading(true);
+    setHistoryError('');
+    setHistoryFilter('all');
+    setHistorySearch('');
+    setHistoryFocusIndex(0);
+    try {
+      const calls = await listLeadCallHistory({ leadId: lead?.dbId, phone: lead?.phone, limit: 30 });
+      setHistoryCalls(Array.isArray(calls) ? calls : []);
+    } catch (err) {
+      setHistoryError(err.message || 'Failed to load call history');
+      setHistoryCalls([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const reloadHistory = async () => {
+    if (!historyLead) return;
+    await openHistory(historyLead);
+  };
+
+  const filteredHistoryCalls = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    return historyCalls.filter((call) => {
+      if (!callMatchesHistoryFilter(call, historyFilter)) return false;
+      if (!q) return true;
+      const summary = String(call.summary || '').toLowerCase();
+      const transcriptText = (Array.isArray(call.transcript) ? call.transcript : [])
+        .map((m) => `${m.role || ''} ${m.content || ''}`)
+        .join(' ')
+        .toLowerCase();
+      const outcome = String(call.outcome || '').toLowerCase();
+      return summary.includes(q) || transcriptText.includes(q) || outcome.includes(q);
+    });
+  }, [historyCalls, historyFilter, historySearch]);
+
+  useEffect(() => {
+    if (!historyLead) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setHistoryLead(null);
+        return;
+      }
+      if (!filteredHistoryCalls.length) return;
+      if (event.key.toLowerCase() === 'j') {
+        setHistoryFocusIndex((prev) => Math.min(filteredHistoryCalls.length - 1, prev + 1));
+      } else if (event.key.toLowerCase() === 'k') {
+        setHistoryFocusIndex((prev) => Math.max(0, prev - 1));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [historyLead, filteredHistoryCalls.length]);
+
+  useEffect(() => {
+    setHistoryFocusIndex((prev) => {
+      if (!filteredHistoryCalls.length) return 0;
+      return Math.min(prev, filteredHistoryCalls.length - 1);
+    });
+  }, [filteredHistoryCalls]);
+
+  useEffect(() => {
+    if (!copyFeedback) return undefined;
+    const timer = setTimeout(() => setCopyFeedback(''), 1400);
+    return () => clearTimeout(timer);
+  }, [copyFeedback]);
+
   return (
     <div className="flex-1 flex flex-col h-full bg-transparent text-slate-800 dark:text-gray-200">
       <header className="px-8 py-6 border-b border-white/10 dark:border-white/5 flex items-center justify-between animate-slide-up" style={{ animationDelay: '300ms' }}>
@@ -333,6 +470,35 @@ export default function Campaigns({
               <p className="text-[11px] text-slate-600 dark:text-gray-500 mt-2 leading-relaxed max-w-xl">
                 Imports, filters, and calls apply only to this campaign. Create another to run a separate list in parallel.
               </p>
+              <div className="mt-3 max-w-md">
+                <label htmlFor="campaign-script-select" className="text-xs text-slate-600 dark:text-gray-500 block mb-1.5">
+                  Script for this campaign
+                </label>
+                <select
+                  id="campaign-script-select"
+                  value={activeCampaign?.questionnaireId || ''}
+                  onChange={(e) => {
+                    const qid = e.target.value || null;
+                    const picked = questionnaires.find((q) => q.id === qid);
+                    onSetCampaignQuestionnaire(
+                      activeCampaignId,
+                      qid,
+                      picked?.name || ''
+                    );
+                  }}
+                  className="w-full bg-white border border-slate-300 dark:bg-gray-950 dark:border-gray-800 rounded-xl px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-brand-500 min-h-[44px]"
+                >
+                  <option value="">No script (default)</option>
+                  {questionnaires.map((q) => (
+                    <option key={q.id} value={q.id}>
+                      {q.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-600 dark:text-gray-500 mt-1.5">
+                  The dialer uses this questionnaire as call guidance for every lead in this campaign.
+                </p>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               {!newCampaignOpen ? (
@@ -636,13 +802,23 @@ export default function Campaigns({
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => handleStartCall(lead)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-brand-400 bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 transition-colors"
-                          >
-                            <Play className="w-3.5 h-3.5" />
-                            Call
-                          </button>
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openHistory(lead)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-colors dark:text-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              History
+                            </button>
+                            <button
+                              onClick={() => handleStartCall(lead)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-brand-400 bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 transition-colors"
+                            >
+                              <Play className="w-3.5 h-3.5" />
+                              Call
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -684,6 +860,201 @@ export default function Campaigns({
         )}
         </div>
       </div>
+      {historyLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            aria-label="Close history"
+            onClick={() => setHistoryLead(null)}
+          />
+          <div className="surface-card relative z-10 max-h-[96vh] w-full max-w-5xl overflow-hidden p-0">
+            <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur sm:px-5 sm:py-4 dark:border-gray-800 dark:bg-gray-900/85">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900 sm:text-lg dark:text-white">
+                  Call history: {historyLead.name || 'Lead'}
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-600 sm:text-sm dark:text-gray-400">{historyLead.phone || 'No phone'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryLead(null)}
+                className="rounded-xl p-2 text-slate-600 transition-colors hover:bg-slate-100 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <div className="custom-scrollbar max-h-[calc(96vh-64px)] overflow-y-auto bg-slate-50/70 p-3 sm:p-5 dark:bg-gray-950/30">
+              {historyLoading ? (
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm text-slate-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading call history...
+                </div>
+              ) : historyError ? (
+                <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
+                  {historyError}
+                </p>
+              ) : historyCalls.length === 0 ? (
+                <p className="rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm text-slate-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
+                  No completed calls found for this lead yet.
+                </p>
+              ) : (
+                <div className="space-y-4 sm:space-y-5">
+                  <div className="rounded-xl border border-slate-200/90 bg-white/90 p-3 dark:border-gray-800 dark:bg-gray-900/60">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {[
+                          { id: 'all', label: 'All' },
+                          { id: 'interested', label: 'Interested' },
+                          { id: 'follow_up', label: 'Follow up' },
+                          { id: 'not_interested', label: 'Not interested' },
+                          { id: 'has_recording', label: 'Has recording' },
+                          { id: 'has_transcript', label: 'Has transcript' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setHistoryFilter(opt.id)}
+                            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                              historyFilter === opt.id
+                                ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300'
+                                : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400 dark:text-gray-500" />
+                          <input
+                            value={historySearch}
+                            onChange={(e) => setHistorySearch(e.target.value)}
+                            placeholder="Search summary/transcript"
+                            className="w-56 rounded-lg border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-xs text-slate-700 outline-none focus:border-brand-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={reloadHistory}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                          title="Refresh history"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-gray-400">
+                      <span>
+                        Showing {filteredHistoryCalls.length} of {historyCalls.length} calls
+                      </span>
+                      <span>Shortcuts: J/K navigate, Esc close</span>
+                    </div>
+                  </div>
+                  {filteredHistoryCalls.map((call, idx) => (
+                    <article
+                      key={call.id}
+                      className={`rounded-2xl border bg-white p-4 shadow-sm dark:bg-gray-900/50 ${
+                        idx === historyFocusIndex
+                          ? 'border-brand-500/40 ring-2 ring-brand-500/15 dark:border-brand-500/40'
+                          : 'border-slate-200/80 dark:border-gray-800'
+                      }`}
+                    >
+                      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs sm:gap-2">
+                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
+                          {new Date(call.createdAt).toLocaleString()}
+                        </span>
+                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
+                          {formatCallDuration(call.duration)}
+                        </span>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2.5 py-1 capitalize ${outcomeBadgeClass(
+                            call.outcome
+                          )}`}
+                        >
+                          {String(call.outcome || 'unknown').replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      {call.summary ? (
+                        <div className="mb-3 rounded-xl border border-slate-200/90 bg-slate-50/80 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/60 sm:py-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-gray-500">
+                              Summary
+                            </p>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const ok = await copyToClipboard(String(call.summary || ''));
+                                if (ok) setCopyFeedback(`summary-${call.id}`);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                            >
+                              <Copy className="h-3 w-3" />
+                              {copyFeedback === `summary-${call.id}` ? 'Copied' : 'Copy'}
+                            </button>
+                          </div>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700 dark:text-gray-300 sm:text-[15px]">
+                            {call.summary}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="mb-3">
+                        <CallRecordingPair sticky userUrl={call.recordingUserUrl} agentUrl={call.recordingAgentUrl} />
+                      </div>
+                      <details className="group" open={idx === 0}>
+                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600 marker:text-slate-500 dark:text-gray-400">
+                          Conversation transcript
+                        </summary>
+                        <div className="mt-3 max-h-[52vh] space-y-2 overflow-y-auto rounded-xl border border-slate-200/90 bg-slate-50/80 p-2.5 text-sm dark:border-gray-800 dark:bg-gray-950/60 sm:max-h-64 sm:p-3">
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const transcriptText = (Array.isArray(call.transcript) ? call.transcript : [])
+                                  .map((m) => `${m.role || 'message'}: ${m.content || ''}`)
+                                  .join('\n');
+                                const ok = await copyToClipboard(transcriptText);
+                                if (ok) setCopyFeedback(`transcript-${call.id}`);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                            >
+                              <Copy className="h-3 w-3" />
+                              {copyFeedback === `transcript-${call.id}` ? 'Copied transcript' : 'Copy transcript'}
+                            </button>
+                          </div>
+                          {(Array.isArray(call.transcript) ? call.transcript : []).map((m, idx) => (
+                            <div
+                              key={`${call.id}-${idx}`}
+                              className={`rounded-lg px-2 py-1.5 sm:px-2.5 sm:py-2 ${
+                                m.role === 'assistant'
+                                  ? 'border border-brand-500/15 bg-brand-500/5 text-slate-700 dark:text-gray-200'
+                                  : 'border border-slate-200/80 bg-white text-slate-700 dark:border-gray-800 dark:bg-gray-900/80 dark:text-gray-300'
+                              }`}
+                            >
+                              <span className="mr-1 font-semibold capitalize">{m.role || 'message'}:</span>
+                              {m.content || ''}
+                            </div>
+                          ))}
+                          {(!Array.isArray(call.transcript) || call.transcript.length === 0) && (
+                            <p className="text-slate-500 dark:text-gray-500">No transcript saved for this call.</p>
+                          )}
+                        </div>
+                      </details>
+                    </article>
+                  ))}
+                  {filteredHistoryCalls.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-600 dark:border-gray-700 dark:bg-gray-900/50 dark:text-gray-400">
+                      No calls match your current filter/search.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

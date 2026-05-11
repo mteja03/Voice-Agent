@@ -10,9 +10,11 @@ const DashboardHome = lazy(() => import('./components/DashboardHome'));
 const Campaigns = lazy(() => import('./components/Campaigns'));
 const AgentConfig = lazy(() => import('./components/AgentConfig'));
 const UserManagement = lazy(() => import('./components/UserManagement'));
+const QuestionnaireBuilder = lazy(() => import('./components/QuestionnaireBuilder'));
 import { login, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
 import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
+import { getQuestionnaire } from './services/questionnairesApi';
 import { Building2, Loader2, Mic, PhoneCall, Sparkles, ShieldCheck } from 'lucide-react';
 
 const SESSION_ID = uuidv4();
@@ -20,6 +22,7 @@ const SESSION_ID = uuidv4();
 const APP_TAB_HEADINGS = {
   dashboard: { title: 'Dashboard', subtitle: 'Performance, calls, and outcomes' },
   campaigns: { title: 'Campaigns', subtitle: 'Lead lists and imports' },
+  questionnaires: { title: 'Questionnaires', subtitle: 'Build discovery and survey scripts' },
   team: { title: 'Team', subtitle: 'Members and access for this workspace' },
   dialer: { title: 'Dialer', subtitle: 'Voice sessions' },
   'agent-config': { title: 'Agent configuration', subtitle: 'Voice, language, and prompts' },
@@ -124,6 +127,8 @@ function loadCampaignsBootstrap() {
           name: typeof c.name === 'string' && c.name.trim() ? c.name.trim() : 'Campaign',
           createdAt: typeof c.createdAt === 'string' ? c.createdAt : new Date().toISOString(),
           leads: normalizeLeadIds(Array.isArray(c.leads) ? c.leads : []),
+          questionnaireId: typeof c.questionnaireId === 'string' ? c.questionnaireId : null,
+          questionnaireName: typeof c.questionnaireName === 'string' ? c.questionnaireName : '',
         }));
       }
     }
@@ -138,6 +143,8 @@ function loadCampaignsBootstrap() {
           name: 'Imported list',
           createdAt: new Date().toISOString(),
           leads,
+          questionnaireId: null,
+          questionnaireName: '',
         },
       ];
       try {
@@ -159,6 +166,8 @@ function loadCampaignsBootstrap() {
       name: 'My first campaign',
       createdAt: new Date().toISOString(),
       leads: [],
+      questionnaireId: null,
+      questionnaireName: '',
     },
   ];
 }
@@ -256,8 +265,18 @@ export default function App() {
   const allLeadsFlat = useMemo(() => campaigns.flatMap((c) => c.leads), [campaigns]);
 
   const [activeLeadId, setActiveLeadId] = useState(loadActiveLeadId);
+  const [activeQuestionnaire, setActiveQuestionnaire] = useState(null);
 
   const activeLead = leads.find((lead) => lead.id === activeLeadId) || null;
+  const activeLeadForDialer = useMemo(() => {
+    if (!activeLead) return null;
+    return {
+      ...activeLead,
+      questionnaireId: activeCampaign?.questionnaireId || null,
+      questionnaireName: activeCampaign?.questionnaireName || '',
+      questionnaire: activeQuestionnaire || null,
+    };
+  }, [activeLead, activeCampaign?.questionnaireId, activeCampaign?.questionnaireName, activeQuestionnaire]);
 
   const {
     status,
@@ -282,7 +301,26 @@ export default function App() {
     retryIntro,
     startPushToTalk,
     stopPushToTalk,
-  } = useVoiceAgent(SESSION_ID, settings, activeLead);
+  } = useVoiceAgent(SESSION_ID, settings, activeLeadForDialer);
+
+  useEffect(() => {
+    const questionnaireId = activeCampaign?.questionnaireId;
+    if (!questionnaireId) {
+      setActiveQuestionnaire(null);
+      return;
+    }
+    let cancelled = false;
+    getQuestionnaire(questionnaireId)
+      .then((q) => {
+        if (!cancelled) setActiveQuestionnaire(q || null);
+      })
+      .catch(() => {
+        if (!cancelled) setActiveQuestionnaire(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCampaign?.questionnaireId, authUser?.activeCompanyId]);
 
   useEffect(() => {
     if (activeLeadId && !leads.some((l) => l.id === activeLeadId)) {
@@ -344,6 +382,7 @@ export default function App() {
       dashboard: () => import('./components/DashboardHome'),
       campaigns: () => import('./components/Campaigns'),
       team: () => import('./components/UserManagement'),
+      questionnaires: () => import('./components/QuestionnaireBuilder'),
       'agent-config': () => import('./components/AgentConfig'),
     };
     const fn = loaders[tabId];
@@ -413,6 +452,8 @@ export default function App() {
         name: trimmed || `Campaign ${prev.length + 1}`,
         createdAt: new Date().toISOString(),
         leads: [],
+        questionnaireId: null,
+        questionnaireName: '',
       },
     ]);
     setActiveCampaignId(id);
@@ -429,6 +470,20 @@ export default function App() {
     const t = (nextName || '').trim();
     if (!t) return;
     setCampaigns((prev) => prev.map((c) => (c.id === campaignId ? { ...c, name: t } : c)));
+  }, []);
+
+  const handleSetCampaignQuestionnaire = useCallback((campaignId, questionnaireId, questionnaireName = '') => {
+    setCampaigns((prev) =>
+      prev.map((c) =>
+        c.id === campaignId
+          ? {
+              ...c,
+              questionnaireId: questionnaireId || null,
+              questionnaireName: questionnaireName || '',
+            }
+          : c
+      )
+    );
   }, []);
 
   const handleDeleteCampaign = useCallback(
@@ -660,6 +715,9 @@ export default function App() {
                 onNavigateDialer={() => setActiveTab('dialer')}
               />
             )}
+            {activeTab === 'questionnaires' && (
+              <QuestionnaireBuilder activeCompanyId={authUser?.activeCompanyId} />
+            )}
             {activeTab === 'campaigns' && (
               <Campaigns
                 campaigns={campaigns}
@@ -668,6 +726,7 @@ export default function App() {
                 onCreateCampaign={handleCreateCampaign}
                 onRenameCampaign={handleRenameCampaign}
                 onDeleteCampaign={handleDeleteCampaign}
+                onSetCampaignQuestionnaire={handleSetCampaignQuestionnaire}
                 leads={leads}
                 activeLead={activeLead}
                 onLeadsChange={handleLeadsChange}
@@ -701,7 +760,7 @@ export default function App() {
                 pauseVad={pauseVad}
                 endCall={endCall}
                 retryIntro={retryIntro}
-                activeLead={activeLead}
+                activeLead={activeLeadForDialer}
                 leads={leads}
                 handleNextLeadQuick={handleNextLeadQuick}
                 settings={settings}

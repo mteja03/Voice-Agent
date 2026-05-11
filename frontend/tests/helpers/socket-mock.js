@@ -126,6 +126,49 @@ export async function mockApiCalls(page) {
         });
       }
 
+      if (url.includes('/api/calls')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { calls: [] } }),
+        });
+      }
+
+      if (url.includes('/api/questionnaires')) {
+        try {
+          const pathname = new URL(url).pathname;
+          const parts = pathname.split('/').filter(Boolean);
+          const qi = parts.indexOf('questionnaires');
+          const qId = qi >= 0 ? parts[qi + 1] : null;
+          if (method === 'GET' && qId) {
+            return route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                success: true,
+                data: {
+                  questionnaire: {
+                    id: qId,
+                    name: 'Mock questionnaire',
+                    description: '',
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    questions: [],
+                  },
+                },
+              }),
+            });
+          }
+        } catch {
+          // fall through
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { questionnaires: [] } }),
+        });
+      }
+
       // Tenants
       if (url.includes('/api/tenants') || url.includes('/api/organizations')) {
         return route.fulfill({

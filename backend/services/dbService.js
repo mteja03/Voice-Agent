@@ -1,5 +1,6 @@
 const { getSupabase } = require('./supabaseClient');
 const { logger } = require('../utils/logger');
+const { throwFromSupabaseError } = require('../utils/supabaseErrors');
 
 async function embedProjectInBackground(projectId, project) {
   const { embedProject } = require('./embeddingService');
@@ -16,6 +17,60 @@ async function embedProjectInBackground(projectId, project) {
 
 function assertCompanyId(companyId) {
   if (!companyId) throw new Error('companyId is required');
+}
+
+function isUuid(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function normalizeDbErrorText(error) {
+  return [error?.message, error?.details, error?.hint]
+    .filter(Boolean)
+    .join(' | ')
+    .toLowerCase();
+}
+
+/** Postgres undefined_column */
+const PG_UNDEFINED_COLUMN = '42703';
+
+function isMissingCallsColumnError(error, columnName) {
+  const text = normalizeDbErrorText(error);
+  const col = String(columnName || '').toLowerCase();
+  if (!col || !text.includes(col)) return false;
+  if (String(error?.code || '') === PG_UNDEFINED_COLUMN) return true;
+  return (
+    text.includes('does not exist') ||
+    text.includes('schema cache') ||
+    (text.includes('could not find') && text.includes('column'))
+  );
+}
+
+/** Any PostgREST / Postgres signal that a selected column is absent on `calls`. */
+function isCallsTableSchemaMismatchError(error) {
+  const text = normalizeDbErrorText(error);
+  const mentionsCallsTable =
+    text.includes('calls.') ||
+    text.includes('relation "calls"') ||
+    text.includes('of relation "calls"') ||
+    text.includes("column of 'calls'") ||
+    (text.includes('schema cache') && text.includes('calls'));
+  if (String(error?.code || '') === PG_UNDEFINED_COLUMN) {
+    return mentionsCallsTable || /\brelation\s+["`]?calls["`]?\b/.test(text);
+  }
+  if (!mentionsCallsTable) return false;
+  return (
+    text.includes('does not exist') ||
+    text.includes('schema cache') ||
+    (text.includes('could not find') && text.includes('column'))
+  );
+}
+
+function shouldRetryLogCallWithoutLeadMeta(error) {
+  return (
+    isMissingCallsColumnError(error, 'lead_phone') ||
+    isMissingCallsColumnError(error, 'lead_name') ||
+    (normalizeDbErrorText(error).includes('schema cache') && normalizeDbErrorText(error).includes('calls'))
+  );
 }
 
 async function ensureCompany(companyId, name = 'Voice Agent Company') {
@@ -97,8 +152,25 @@ async function upsertLead(companyId, lead = {}) {
   assertCompanyId(companyId);
   const supabase = getSupabase();
   if (!lead.phone && !lead.id) return null;
+  let resolvedId = isUuid(lead.id) ? lead.id : undefined;
+
+  // Most frontend lead IDs are phone-based strings (not UUID). Resolve by phone first.
+  if (!resolvedId && lead.phone) {
+    const { data: existingByPhone, error: lookupError } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('phone', lead.phone)
+      .maybeSingle();
+    if (lookupError) {
+      logger.warn('lead_lookup_failed', { companyId, phone: lead.phone, error: lookupError.message });
+    } else if (existingByPhone?.id) {
+      resolvedId = existingByPhone.id;
+    }
+  }
+
   const payload = {
-    id: lead.id || undefined,
+    id: resolvedId,
     company_id: companyId,
     name: lead.name || 'Unknown',
     phone: lead.phone || null,
@@ -124,15 +196,158 @@ async function logCall(companyId, sessionId, lead, durationSeconds, outcome, tra
   const payload = {
     company_id: companyId,
     lead_id: leadId,
+    lead_phone: lead?.phone || null,
+    lead_name: lead?.name || null,
     session_id: sessionId,
     duration: durationSeconds || 0,
     outcome: outcome || 'unknown',
     transcript,
     summary,
   };
-  const { data, error } = await supabase.from('calls').insert(payload).select('id').single();
+  let { data, error } = await supabase.from('calls').insert(payload).select('id').single();
+  if (error && shouldRetryLogCallWithoutLeadMeta(error)) {
+    // Backward compatibility when lead_phone / lead_name (or stale schema cache) are not available.
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.lead_phone;
+    delete fallbackPayload.lead_name;
+    ({ data, error } = await supabase.from('calls').insert(fallbackPayload).select('id').single());
+  }
   if (error) throw error;
   return data?.id;
+}
+
+async function updateCallRecordingPaths(companyId, callId, { recordingUserPath, recordingAgentPath }) {
+  assertCompanyId(companyId);
+  if (!callId) return;
+  const patch = {};
+  if (recordingUserPath) patch.recording_user_path = recordingUserPath;
+  if (recordingAgentPath) patch.recording_agent_path = recordingAgentPath;
+  if (!Object.keys(patch).length) return;
+  const supabase = getSupabase();
+  const { error } = await supabase.from('calls').update(patch).eq('id', callId).eq('company_id', companyId);
+  if (
+    error &&
+    (isMissingCallsColumnError(error, 'recording_user_path') ||
+      isMissingCallsColumnError(error, 'recording_agent_path'))
+  ) {
+    logger.warn('update_call_recording_paths_skipped', {
+      companyId,
+      callId,
+      message: error.message,
+    });
+    return;
+  }
+  if (error) throw error;
+}
+
+async function listRecentCalls(companyId, limit = 25) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const cap = Math.min(100, Math.max(1, Number(limit) || 25));
+  const fullSelect =
+    'id,created_at,duration,outcome,summary,lead_id,lead_phone,lead_name,recording_user_path,recording_agent_path';
+  let { data, error } = await supabase
+    .from('calls')
+    .select(fullSelect)
+    .eq('company_id', companyId)
+    .order('created_at', { ascending: false })
+    .limit(cap);
+  if (error && (isMissingCallsColumnError(error, 'lead_phone') || isMissingCallsColumnError(error, 'lead_name'))) {
+    ({ data, error } = await supabase
+      .from('calls')
+      .select('id,created_at,duration,outcome,summary,lead_id,recording_user_path,recording_agent_path')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .limit(cap));
+    if (!error) {
+      data = (data || []).map((row) => ({ ...row, lead_phone: null, lead_name: null }));
+    }
+  }
+  if (error && isCallsTableSchemaMismatchError(error)) {
+    ({ data, error } = await supabase
+      .from('calls')
+      .select('id,created_at,duration,outcome,summary,lead_id')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .limit(cap));
+    if (!error) {
+      data = (data || []).map((row) => ({
+        ...row,
+        lead_phone: null,
+        lead_name: null,
+        recording_user_path: null,
+        recording_agent_path: null,
+      }));
+    }
+  }
+  if (error) throw error;
+  return data || [];
+}
+
+async function listCallsForLead(companyId, { leadId, leadPhone }, limit = 20) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const cap = Math.min(100, Math.max(1, Number(limit) || 20));
+
+  const hasUuidLeadId = Boolean(leadId && isUuid(leadId));
+
+  const runQuery = (withLeadPhoneColumns) => {
+    const selectCols = withLeadPhoneColumns
+      ? 'id,created_at,duration,outcome,summary,transcript,lead_id,lead_phone,lead_name,recording_user_path,recording_agent_path'
+      : 'id,created_at,duration,outcome,summary,transcript,lead_id,recording_user_path,recording_agent_path';
+    let query = supabase
+      .from('calls')
+      .select(selectCols)
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .limit(cap);
+    if (hasUuidLeadId) {
+      query = query.eq('lead_id', leadId);
+    } else if (withLeadPhoneColumns && leadPhone) {
+      query = query.eq('lead_phone', leadPhone);
+    }
+    return query;
+  };
+
+  let query = runQuery(true);
+  if (!hasUuidLeadId && !leadPhone) {
+    return [];
+  }
+
+  let { data, error } = await query;
+  if (error && (isMissingCallsColumnError(error, 'lead_phone') || isMissingCallsColumnError(error, 'lead_name'))) {
+    if (!hasUuidLeadId) {
+      // Before migration, non-UUID frontend lead IDs cannot be resolved safely by phone.
+      return [];
+    }
+    ({ data, error } = await runQuery(false));
+    if (!error) {
+      data = (data || []).map((row) => ({ ...row, lead_phone: null, lead_name: null }));
+    }
+  }
+  if (error && isCallsTableSchemaMismatchError(error)) {
+    if (!hasUuidLeadId) {
+      return [];
+    }
+    ({ data, error } = await supabase
+      .from('calls')
+      .select('id,created_at,duration,outcome,summary,transcript,lead_id')
+      .eq('company_id', companyId)
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(cap));
+    if (!error) {
+      data = (data || []).map((row) => ({
+        ...row,
+        lead_phone: null,
+        lead_name: null,
+        recording_user_path: null,
+        recording_agent_path: null,
+      }));
+    }
+  }
+  if (error) throw error;
+  return data || [];
 }
 
 async function getAnalytics(companyId) {
@@ -411,12 +626,181 @@ async function upsertAgentConfig(companyId, payload) {
   return data;
 }
 
+function mapQuestionRow(r) {
+  return {
+    id: r.id,
+    sortOrder: r.sort_order,
+    type: r.question_type,
+    prompt: r.prompt,
+    options: Array.isArray(r.options) ? r.options : [],
+    required: r.is_required,
+  };
+}
+
+function mapQuestionnaireDetail(row, questions) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    questions: (questions || []).map(mapQuestionRow),
+  };
+}
+
+async function listQuestionnaires(companyId) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const { data: questionnaires, error: qErr } = await supabase
+    .from('questionnaires')
+    .select('id, name, description, updated_at')
+    .eq('company_id', companyId)
+    .order('updated_at', { ascending: false });
+  if (qErr) throwFromSupabaseError(qErr, 'listQuestionnaires');
+  const list = questionnaires || [];
+  if (list.length === 0) return [];
+
+  const ids = list.map((q) => q.id);
+  const { data: counts, error: cErr } = await supabase
+    .from('questionnaire_questions')
+    .select('questionnaire_id')
+    .in('questionnaire_id', ids);
+  if (cErr) throwFromSupabaseError(cErr, 'listQuestionnaires_counts');
+  const byQ = new Map();
+  for (const row of counts || []) {
+    const id = row.questionnaire_id;
+    byQ.set(id, (byQ.get(id) || 0) + 1);
+  }
+
+  return list.map((q) => ({
+    id: q.id,
+    name: q.name,
+    description: q.description || '',
+    updatedAt: q.updated_at,
+    questionCount: byQ.get(q.id) || 0,
+  }));
+}
+
+async function getQuestionnaire(companyId, questionnaireId) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const { data: row, error: qErr } = await supabase
+    .from('questionnaires')
+    .select('*')
+    .eq('company_id', companyId)
+    .eq('id', questionnaireId)
+    .maybeSingle();
+  if (qErr) throwFromSupabaseError(qErr, 'getQuestionnaire');
+  if (!row) return null;
+
+  const { data: qs, error: qsErr } = await supabase
+    .from('questionnaire_questions')
+    .select('*')
+    .eq('questionnaire_id', questionnaireId)
+    .order('sort_order', { ascending: true });
+  if (qsErr) throwFromSupabaseError(qsErr, 'getQuestionnaire_questions');
+  return mapQuestionnaireDetail(row, qs || []);
+}
+
+async function createQuestionnaire(companyId, { name, description, questions }) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const { data: row, error: insErr } = await supabase
+    .from('questionnaires')
+    .insert({
+      company_id: companyId,
+      name,
+      description: description || '',
+      updated_at: new Date().toISOString(),
+    })
+    .select('*')
+    .single();
+  if (insErr) throwFromSupabaseError(insErr, 'createQuestionnaire_insert');
+
+  const qid = row.id;
+  if (questions.length > 0) {
+    const payload = questions.map((q, i) => ({
+      questionnaire_id: qid,
+      sort_order: q.sortOrder ?? i,
+      question_type: q.type,
+      prompt: q.prompt,
+      options: q.options || [],
+      is_required: q.required !== false,
+    }));
+    const { error: qErr } = await supabase.from('questionnaire_questions').insert(payload);
+    if (qErr) throwFromSupabaseError(qErr, 'createQuestionnaire_questions');
+  }
+
+  return getQuestionnaire(companyId, qid);
+}
+
+async function updateQuestionnaire(companyId, questionnaireId, { name, description, questions }) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const { data: existing, error: findErr } = await supabase
+    .from('questionnaires')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('id', questionnaireId)
+    .maybeSingle();
+  if (findErr) throwFromSupabaseError(findErr, 'updateQuestionnaire_find');
+  if (!existing) return null;
+
+  const { error: delErr } = await supabase
+    .from('questionnaire_questions')
+    .delete()
+    .eq('questionnaire_id', questionnaireId);
+  if (delErr) throwFromSupabaseError(delErr, 'updateQuestionnaire_delete_questions');
+
+  const { error: upErr } = await supabase
+    .from('questionnaires')
+    .update({
+      name,
+      description: description || '',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', questionnaireId)
+    .eq('company_id', companyId);
+  if (upErr) throwFromSupabaseError(upErr, 'updateQuestionnaire_row');
+
+  if (questions.length > 0) {
+    const payload = questions.map((q, i) => ({
+      questionnaire_id: questionnaireId,
+      sort_order: q.sortOrder ?? i,
+      question_type: q.type,
+      prompt: q.prompt,
+      options: q.options || [],
+      is_required: q.required !== false,
+    }));
+    const { error: insErr } = await supabase.from('questionnaire_questions').insert(payload);
+    if (insErr) throwFromSupabaseError(insErr, 'updateQuestionnaire_insert_questions');
+  }
+
+  return getQuestionnaire(companyId, questionnaireId);
+}
+
+async function deleteQuestionnaire(companyId, questionnaireId) {
+  assertCompanyId(companyId);
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('questionnaires')
+    .delete()
+    .eq('company_id', companyId)
+    .eq('id', questionnaireId)
+    .select('id');
+  if (error) throwFromSupabaseError(error, 'deleteQuestionnaire');
+  return Array.isArray(data) && data.length > 0;
+}
+
 module.exports = {
   saveMessage,
   getRecentMessages,
   getSessionMessages,
   clearSessionDb,
   logCall,
+  updateCallRecordingPaths,
+  listRecentCalls,
+  listCallsForLead,
   getAnalytics,
   listProjects,
   getProjectById,
@@ -429,4 +813,9 @@ module.exports = {
   getAgentConfigRow,
   upsertAgentConfig,
   upsertLead,
+  listQuestionnaires,
+  getQuestionnaire,
+  createQuestionnaire,
+  updateQuestionnaire,
+  deleteQuestionnaire,
 };

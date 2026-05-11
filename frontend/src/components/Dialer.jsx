@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Users, ChevronRight, Loader2, WifiOff } from 'lucide-react';
+import { Users, ChevronRight, Loader2, WifiOff, ClipboardList } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import ActiveLeadCard from './ActiveLeadCard';
 import ConversationFeed from './ConversationFeed';
@@ -189,6 +189,13 @@ export default function Dialer({
       </header>
 
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4 min-h-0 sm:px-8 sm:py-6">
+        {activeLead?.questionnaireName && (
+          <div className="flex items-center gap-2 rounded-xl border border-brand-500/25 bg-brand-500/10 px-3 py-2 text-xs text-brand-800 dark:text-brand-300">
+            <ClipboardList className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="font-semibold">Using script:</span>
+            <span className="truncate">{activeLead.questionnaireName}</span>
+          </div>
+        )}
         <CallLifecycleStrip
           socketReady={socketReady}
           vadLoading={vadLoading}

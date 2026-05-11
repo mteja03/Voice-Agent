@@ -29,6 +29,11 @@ create table if not exists calls (
   created_at timestamptz not null default now()
 );
 
+alter table calls add column if not exists recording_user_path text;
+alter table calls add column if not exists recording_agent_path text;
+alter table calls add column if not exists lead_phone text;
+alter table calls add column if not exists lead_name text;
+
 create table if not exists agent_configs (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references companies(id) on delete cascade,
@@ -106,3 +111,27 @@ create index if not exists idx_leads_company_id on leads(company_id);
 create index if not exists idx_calls_company_created on calls(company_id, created_at desc);
 create index if not exists idx_messages_company_session_created on messages(company_id, session_id, created_at desc);
 create index if not exists idx_projects_company_created on projects(company_id, created_at desc);
+
+-- Questionnaires (workspace-scoped scripts / forms for agents)
+create table if not exists questionnaires (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references companies(id) on delete cascade,
+  name text not null,
+  description text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists questionnaire_questions (
+  id uuid primary key default gen_random_uuid(),
+  questionnaire_id uuid not null references questionnaires(id) on delete cascade,
+  sort_order int not null default 0,
+  question_type text not null default 'text' check (question_type in ('text', 'single_choice', 'multi_choice')),
+  prompt text not null,
+  options jsonb not null default '[]'::jsonb,
+  is_required boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_questionnaires_company_updated on questionnaires(company_id, updated_at desc);
+create index if not exists idx_questionnaire_questions_qid_order on questionnaire_questions(questionnaire_id, sort_order);

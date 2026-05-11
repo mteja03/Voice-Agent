@@ -34,6 +34,8 @@ const analyticsRouter = require('./routes/analytics');
 const agentConfigRouter = require('./routes/agentConfig');
 const tenantsRouter = require('./routes/tenants');
 const usersRouter = require('./routes/users');
+const callsRouter = require('./routes/calls');
+const questionnairesRouter = require('./routes/questionnaires');
 const { authMiddleware } = require('./middleware/auth');
 const { requireCompanyId } = require('./middleware/tenant');
 const { requestIdMiddleware } = require('./middleware/requestContext');
@@ -48,7 +50,8 @@ const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./services/te
 const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech } = require('./services/ttsService');
-const { saveMessage, logCall, getSessionMessages } = require('./services/db');
+const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths } = require('./services/db');
+const callRecording = require('./services/callRecording');
 const { safeClientMessage } = require('./utils/sanitize');
 const { logger } = require('./utils/logger');
 
@@ -104,6 +107,8 @@ app.use('/api/kb', authMiddleware, verifyUserContext, requireCompanyId, knowledg
 app.use('/api/analytics', authMiddleware, verifyUserContext, requireCompanyId, analyticsRouter);
 app.use('/api/agent-config', authMiddleware, verifyUserContext, requireCompanyId, agentConfigRouter);
 app.use('/api/users', authMiddleware, verifyUserContext, requireCompanyId, usersRouter);
+app.use('/api/calls', authMiddleware, verifyUserContext, requireCompanyId, callsRouter);
+app.use('/api/questionnaires', authMiddleware, verifyUserContext, requireCompanyId, questionnairesRouter);
 
 app.get('/', (req, res) => {
   res.send('Server is running');
@@ -216,6 +221,13 @@ const STT_NOISE_NUDGE_TEXT = 'మీరు వినపడుతున్నా�
 
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function emitTtsAudioChunk(socket, companyId, sessionId, payload) {
+  if (payload?.audioBuffer && Buffer.isBuffer(payload.audioBuffer) && payload.audioBuffer.length) {
+    callRecording.appendAgent(companyId, sessionId, payload.audioBuffer);
+  }
+  socket.emit('tts_audio_chunk', payload);
 }
 
 function splitForTts(buffer, isFirstChunk) {
@@ -355,8 +367,9 @@ io.on('connection', (socket) => {
     companyId,
     userId: socket.user.userId,
   });
+  socket.data = socket.data || {};
 
-  async function emitSingleTtsClip({ text, signal, socket, ttsModel, ttsVoice, languageMode }) {
+  async function emitSingleTtsClip({ text, signal, socket, ttsModel, ttsVoice, languageMode, sessionId }) {
     const normalizedText = normalizeTtsText(text);
     if (!normalizedText || normalizedText.length < 3 || signal.aborted) return { emitted: false, ttsMs: 0 };
     const ttsStart = nowMs();
@@ -373,7 +386,7 @@ io.on('connection', (socket) => {
       const audioBase64 = await Promise.race([ttsPromise, timeoutPromise]);
       const ttsMs = nowMs() - ttsStart;
       if (!signal.aborted) {
-        socket.emit('tts_audio_chunk', {
+        emitTtsAudioChunk(socket, companyId, sessionId, {
           audioBuffer: Buffer.from(audioBase64, 'base64'),
           text: normalizedText,
         });
@@ -385,7 +398,7 @@ io.on('connection', (socket) => {
       if (String(ttsErr?.message || '').includes('timeout')) {
         console.warn('[TTS] Timeout — emitting text only');
         if (!signal.aborted) {
-          socket.emit('tts_audio_chunk', { audioBuffer: null, text: normalizedText });
+          emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: normalizedText });
         }
         return { emitted: false, ttsMs };
       }
@@ -426,14 +439,14 @@ io.on('connection', (socket) => {
           ttsChunks += 1;
           if (!firstAudioAtMs) firstAudioAtMs = nowMs();
           if (!signal.aborted) {
-            socket.emit('tts_audio_chunk', {
+            emitTtsAudioChunk(socket, companyId, sessionId, {
               audioBuffer: Buffer.from(audioBase64, 'base64'),
               text: sentence,
             });
           }
         } catch (ttsErr) {
           console.error('[TTS Chunk Error]', ttsErr.message);
-          socket.emit('tts_audio_chunk', { audioBuffer: null, text: sentence });
+          emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: sentence });
         }
       }
     }
@@ -453,7 +466,7 @@ io.on('connection', (socket) => {
           ttsChunks += 1;
           if (!firstAudioAtMs) firstAudioAtMs = nowMs();
           if (!signal.aborted) {
-            socket.emit('tts_audio_chunk', {
+            emitTtsAudioChunk(socket, companyId, sessionId, {
               audioBuffer: Buffer.from(audioBase64, 'base64'),
               text: sentence,
             });
@@ -463,7 +476,7 @@ io.on('connection', (socket) => {
         }
       } catch (ttsErr) {
         console.error('[TTS Flush Error]', ttsErr.message);
-        socket.emit('tts_audio_chunk', {
+        emitTtsAudioChunk(socket, companyId, sessionId, {
           audioBuffer: null,
           text: trimLikelyClippedTeluguTail(stripTtsFlushArtifacts(normalizeTtsText(sentenceBuffer))),
         });
@@ -513,6 +526,7 @@ io.on('connection', (socket) => {
     if (!socket.user?.companyId) return;
     const { sessionId, ttsModel, ttsVoice, lead, introTemplate, languageMode, agentName } = data;
     if (!sessionId || !companyId) return;
+    socket.data.recordingSessionId = sessionId;
 
     if (!sessionStartTimes.has(sessionId)) {
       sessionStartTimes.set(sessionId, nowMs());
@@ -539,6 +553,7 @@ io.on('connection', (socket) => {
         ttsModel,
         ttsVoice,
         languageMode,
+        sessionId,
       });
 
       if (!signal.aborted) {
@@ -574,6 +589,7 @@ io.on('connection', (socket) => {
     if (!socket.user?.companyId) return;
     const { audioBuffer, sessionId, sttModel, ttsModel, ttsVoice, lead, languageMode, agentName, mimeType } = data;
     if (!companyId || !sessionId) return;
+    socket.data.recordingSessionId = sessionId;
     // Resolve MIME type: client sends it for push-to-talk (mp4/webm); default to WAV for VAD path
     const audioMimeType = (typeof mimeType === 'string' && mimeType.trim()) ? mimeType.trim() : 'audio/wav';
 
@@ -590,13 +606,19 @@ io.on('connection', (socket) => {
       const requestStartMs = nowMs();
       const sttStartMs = nowMs();
 
+      const normalizedUserAudio = callRecording.normalizeSocketAudioBuffer(audioBuffer);
+      if (normalizedUserAudio?.length) {
+        callRecording.appendUser(companyId, sessionId, normalizedUserAudio, audioMimeType);
+      }
+      const sttInput = normalizedUserAudio?.length ? normalizedUserAudio : audioBuffer;
+
       // ── Feature 6: STT with language fallback ──────────────────────────────
       // Try te-IN first. If transcript is empty or looks like garbled output,
       // retry with language auto-detection (no language_code).
       let transcript = '';
       try {
         const sttPromise = transcribeAudio(
-          audioBuffer,
+          sttInput,
           audioMimeType,
           sttModel || 'saarika:v2.5',
           resolveSttLanguageCode(languageMode)
@@ -625,7 +647,7 @@ io.on('connection', (socket) => {
       if (transcript.length === 0) {
         console.log('[STT Fallback] Retrying with unknown lang (empty transcript)');
         try {
-          const sttPromise = transcribeAudio(audioBuffer, audioMimeType, sttModel || 'saarika:v2.5', 'unknown');
+          const sttPromise = transcribeAudio(sttInput, audioMimeType, sttModel || 'saarika:v2.5', 'unknown');
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
           );
@@ -658,7 +680,10 @@ io.on('connection', (socket) => {
               STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
             );
             if (!signal.aborted) {
-              socket.emit('tts_audio_chunk', { audioBuffer: Buffer.from(nudgeAudio, 'base64'), text: STT_NOISE_NUDGE_TEXT });
+              emitTtsAudioChunk(socket, companyId, sessionId, {
+                audioBuffer: Buffer.from(nudgeAudio, 'base64'),
+                text: STT_NOISE_NUDGE_TEXT,
+              });
               socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
             }
           } catch { socket.emit('no_speech'); }
@@ -680,7 +705,10 @@ io.on('connection', (socket) => {
               STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
             );
             if (!signal.aborted) {
-              socket.emit('tts_audio_chunk', { audioBuffer: Buffer.from(nudgeAudio, 'base64'), text: STT_NOISE_NUDGE_TEXT });
+              emitTtsAudioChunk(socket, companyId, sessionId, {
+                audioBuffer: Buffer.from(nudgeAudio, 'base64'),
+                text: STT_NOISE_NUDGE_TEXT,
+              });
               socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
             }
           } catch { socket.emit('no_speech'); }
@@ -749,6 +777,7 @@ io.on('connection', (socket) => {
     const { sessionId, lead } = data;
     if (!sessionId || !companyId) return;
 
+    socket.data.endingCall = true;
     const callEndMs = nowMs();
 
     const ctrl = activeSessions.get(socket.id);
@@ -764,7 +793,13 @@ io.on('connection', (socket) => {
       const durationSeconds = Math.round(durationMs / 1000);
       
       const transcript = await getSessionMessages(companyId, sessionId);
-      await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
+      const callId = await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
+      if (callId) {
+        const rec = await callRecording.finalizeUpload(companyId, sessionId, callId);
+        if (rec && (rec.recordingUserPath || rec.recordingAgentPath)) {
+          await updateCallRecordingPaths(companyId, callId, rec);
+        }
+      }
       sessionStartTimes.delete(sessionId);
       logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
       
@@ -772,6 +807,8 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[Socket] End Call Summary Error:', err.message);
       emitSocketError(socket, 'SYSTEM', 'Failed to generate call summary');
+    } finally {
+      socket.data.endingCall = false;
     }
   });
 
@@ -781,6 +818,10 @@ io.on('connection', (socket) => {
     if (ctrl) ctrl.abort();
     activeSessions.delete(socket.id);
     socketNoiseCounts.delete(socket.id);
+    const recSid = socket.data?.recordingSessionId;
+    if (recSid && companyId && !socket.data?.endingCall) {
+      callRecording.discard(companyId, recSid);
+    }
     logger.info('socket_disconnected', {
       socketId: socket.id,
       reason,
