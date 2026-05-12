@@ -307,14 +307,25 @@ export default function AgentConfig({
                       className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
                     />
                     <span className="text-slate-500 dark:text-gray-500">to</span>
-                    <input 
-                      type="time" 
-                      value={settings.operatingEnd || '19:00'} 
+                    <input
+                      type="time"
+                      value={settings.operatingEnd || '19:00'}
                       onChange={(e) => handleUpdateSetting('operatingEnd', e.target.value)}
-                      className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-brand-500 dark:bg-gray-950 dark:border-gray-800 dark:text-white"
+                      className={`flex-1 bg-white border rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none dark:bg-gray-950 dark:text-white ${
+                        settings.operatingStart && settings.operatingEnd && settings.operatingEnd <= settings.operatingStart
+                          ? 'border-red-400 focus:border-red-500 dark:border-red-600'
+                          : 'border-slate-300 focus:border-brand-500 dark:border-gray-800'
+                      }`}
                     />
                   </div>
-                  <p className="text-xs text-slate-600 dark:text-gray-500 mt-1.5">Auto-dialer will only operate within this window.</p>
+                  {settings.operatingStart && settings.operatingEnd && settings.operatingEnd <= settings.operatingStart ? (
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-1.5 flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9.303 3.376c.866 1.5-.217 3.374-1.948 3.374H4.645c-1.73 0-2.813-1.874-1.948-3.374L10.051 3.378c.866-1.5 3.032-1.5 3.898 0L21.303 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                      End time must be after start time.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-600 dark:text-gray-500 mt-1.5">Auto-dialer will only operate within this window.</p>
+                  )}
                 </div>
               </div>
             </section>

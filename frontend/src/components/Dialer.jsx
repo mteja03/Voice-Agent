@@ -214,6 +214,7 @@ export default function Dialer({
           vadLoading={vadLoading}
           status={status}
           hasLead={hasLead}
+          hasTurns={turns.length > 0}
         />
         {!isPushToTalkMode && (
           <p className="text-[11px] text-slate-600 dark:text-gray-500 leading-snug px-0.5">
@@ -235,6 +236,7 @@ export default function Dialer({
             isProcessing={status === 'processing'}
             processingStage={processingStage}
             isSpeaking={status === 'speaking'}
+            languageMode={settings?.languageMode}
           />
         </div>
 

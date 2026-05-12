@@ -104,7 +104,14 @@ function TypingIndicator({ stage }) {
   );
 }
 
-export default function ConversationFeed({ turns, isProcessing, processingStage, isSpeaking }) {
+const LANG_EMPTY = {
+  telugu:  { heading: 'మీ conversation ఇక్కడ కనిపిస్తుంది', hint: 'Speak naturally in Telugu' },
+  hindi:   { heading: 'आपकी conversation यहाँ दिखाई देगी',   hint: 'Hindi में बात करें' },
+  english: { heading: 'Your conversation will appear here',   hint: 'Speak naturally in English' },
+  auto:    { heading: 'Your conversation will appear here',   hint: 'Speak naturally — language auto-detected' },
+};
+
+export default function ConversationFeed({ turns, isProcessing, processingStage, isSpeaking, languageMode }) {
   const bottomRef = useRef(null);
   const safeTurns = Array.isArray(turns) ? turns : [];
 
@@ -113,6 +120,7 @@ export default function ConversationFeed({ turns, isProcessing, processingStage,
   }, [safeTurns, isProcessing, isSpeaking]);
 
   const lastTurnIndex = safeTurns.length - 1;
+  const langLabels = LANG_EMPTY[languageMode] || LANG_EMPTY.telugu;
 
   if (safeTurns.length === 0 && !isProcessing) {
     return (
@@ -124,8 +132,8 @@ export default function ConversationFeed({ turns, isProcessing, processingStage,
           </svg>
         </div>
         <div>
-          <p className="text-slate-800 dark:text-gray-300 text-sm font-medium">మీ conversation ఇక్కడ కనిపిస్తుంది</p>
-          <p className="text-slate-600 dark:text-gray-500 text-xs mt-1">Tap the mic and speak naturally in Telugu</p>
+          <p className="text-slate-800 dark:text-gray-300 text-sm font-medium">{langLabels.heading}</p>
+          <p className="text-slate-600 dark:text-gray-500 text-xs mt-1">{langLabels.hint}</p>
         </div>
       </div>
     );
@@ -141,7 +149,7 @@ export default function ConversationFeed({ turns, isProcessing, processingStage,
       <div className="flex-1 min-h-0 overflow-y-auto py-4 px-1 flex flex-col gap-6 custom-scrollbar">
         {safeTurns.map((turn, i) => (
           <MessageBubble
-            key={i}
+            key={turn.id ?? i}
             turn={turn}
             // Show cursor while the last turn is still streaming (speaking state with no latency yet)
             isStreaming={i === lastTurnIndex && isSpeaking && !turn.latency}

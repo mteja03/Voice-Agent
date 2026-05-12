@@ -8,7 +8,7 @@ const STEPS = [
   { id: 'you', label: 'You speak', Icon: UserCircle },
 ];
 
-export default function CallLifecycleStrip({ socketReady, vadLoading, status, hasLead }) {
+export default function CallLifecycleStrip({ socketReady, vadLoading, status, hasLead, hasTurns }) {
   const backendOk = socketReady;
   const micWarm = !vadLoading;
   const sessionActive = hasLead && status !== 'idle';
@@ -36,8 +36,9 @@ export default function CallLifecycleStrip({ socketReady, vadLoading, status, ha
     if (id === 'you') {
       if (!sessionActive) return 'idle';
       if (status === 'listening') return 'active';
-      if (status === 'processing' || status === 'speaking') return 'idle';
-      return 'done';
+      // Only mark "done" if the user has actually spoken at least once
+      if ((status === 'processing' || status === 'speaking') && hasTurns) return 'done';
+      return 'idle';
     }
     return 'idle';
   };

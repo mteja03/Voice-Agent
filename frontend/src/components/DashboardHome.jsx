@@ -122,6 +122,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
   const [analytics, setAnalytics] = useState(null);
   const [recentCalls, setRecentCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
   const [recordingsFilter, setRecordingsFilter] = useState('all');
   const [recordingsSearch, setRecordingsSearch] = useState('');
@@ -141,6 +142,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
   const loadDashboard = useCallback(async (setInitialLoading = false) => {
     if (setInitialLoading) setLoading(true);
     else setRecordingsLoading(true);
+    setFetchError(null);
     try {
       const [analyticsData, callsRows] = await Promise.all([
         apiFetch(`${BACKEND_URL}/api/analytics`),
@@ -151,6 +153,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
       setFetchedAt(new Date());
     } catch (err) {
       console.error('Failed to fetch analytics', err);
+      setFetchError(err?.message || 'Failed to load analytics');
       setAnalytics(null);
       setRecentCalls([]);
     } finally {
@@ -172,11 +175,13 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
         setAnalytics(analyticsData);
         setRecentCalls(Array.isArray(callsRows) ? callsRows : []);
         setFetchedAt(new Date());
+        setFetchError(null);
       } catch (err) {
         console.error('Failed to fetch analytics', err);
         if (!cancelled) {
           setAnalytics(null);
           setRecentCalls([]);
+          setFetchError(err?.message || 'Failed to load analytics');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -250,15 +255,42 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1 text-right">
-          {updatedLabel && (
+          {fetchError ? (
+            <span className="text-xs text-red-600 dark:text-red-400">Fetch failed — showing stale data</span>
+          ) : updatedLabel ? (
             <span className="text-xs text-slate-500 dark:text-gray-500">{updatedLabel}</span>
-          )}
-          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-gray-400">
-            <Activity className="h-4 w-4 text-brand-400" aria-hidden />
-            Live metrics
-          </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => loadDashboard(false)}
+            disabled={recordingsLoading}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-brand-600 dark:text-gray-500 dark:hover:text-brand-400 transition-colors disabled:opacity-50"
+            title="Refresh dashboard data"
+          >
+            <Activity className={`h-3.5 w-3.5 text-brand-400 ${recordingsLoading ? 'animate-spin' : ''}`} aria-hidden />
+            {fetchedAt ? `Last refreshed ${fetchedAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : 'Refresh'}
+          </button>
         </div>
       </header>
+
+      {fetchError && (
+        <div role="alert" className="mx-4 mt-4 sm:mx-8 flex items-start gap-3 rounded-xl border border-red-300/60 bg-red-50/95 px-4 py-3 text-sm text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-200">
+          <svg className="mt-0.5 h-4 w-4 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">Analytics unavailable</p>
+            <p className="mt-0.5 text-xs text-red-700 dark:text-red-300">{fetchError} — check your server connection and try refreshing.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => loadDashboard(false)}
+            className="shrink-0 rounded-lg border border-red-300 bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-200 dark:border-red-700 dark:bg-red-900/40 dark:text-red-200 dark:hover:bg-red-900/70 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-8 sm:py-8">

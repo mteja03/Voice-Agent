@@ -44,6 +44,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const [callNotice, setCallNotice] = useState('');
   const [lastCallSummary, setLastCallSummary] = useState(null);
 
+  const turnIdRef = useRef(0);
   const socketRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
@@ -180,7 +181,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     };
 
     const handleTranscript = ({ transcript }) => {
-      setTurns(prev => [...prev, { transcript, aiText: '' }]);
+      setTurns(prev => [...prev, { id: turnIdRef.current++, transcript, aiText: '' }]);
       setStatus('processing');
       setProcessingStage('generating'); // STT done → now generating LLM reply
     };
@@ -196,7 +197,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         if (lastTurn) {
           lastTurn.aiText = (lastTurn.aiText + ' ' + text).trim();
         } else {
-          newTurns.push({ transcript: '', aiText: text, isIntro: true });
+          newTurns.push({ id: turnIdRef.current++, transcript: '', aiText: text, isIntro: true });
         }
         return newTurns;
       });
