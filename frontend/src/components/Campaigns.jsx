@@ -15,6 +15,9 @@ import {
   Loader2,
   Copy,
   RefreshCw,
+  Check,
+  Phone,
+  User,
 } from 'lucide-react';
 import { listQuestionnaires } from '../services/questionnairesApi';
 import { listLeadCallHistory } from '../services/callsApi';
@@ -60,12 +63,12 @@ function parseCsv(text) {
 
 function outcomeBadgeClass(outcome) {
   switch (outcome) {
-    case 'new': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-    case 'interested': return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-    case 'follow_up': return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-    case 'not_interested': return 'bg-red-500/10 text-red-400 border-red-500/20';
-    case 'closed': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
-    default: return 'bg-slate-200 text-slate-700 border-slate-300 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700';
+    case 'new':            return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/40';
+    case 'interested':     return 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800/40';
+    case 'follow_up':      return 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/40';
+    case 'not_interested': return 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800/40';
+    case 'closed':         return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800/40';
+    default:               return 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700';
   }
 }
 
@@ -141,6 +144,8 @@ export default function Campaigns({
   const [historySearch, setHistorySearch] = useState('');
   const [historyFocusIndex, setHistoryFocusIndex] = useState(0);
   const [copyFeedback, setCopyFeedback] = useState('');
+  const [editingSummaryId, setEditingSummaryId] = useState(null);
+  const [summaryDraft, setSummaryDraft] = useState('');
   const fileInputRef = useRef(null);
 
   const hasLeads = leads.length > 0;
@@ -366,7 +371,20 @@ export default function Campaigns({
 
   const reloadHistory = async () => {
     if (!historyLead) return;
+    setEditingSummaryId(null);
     await openHistory(historyLead);
+  };
+
+  const startEditSummary = (call) => {
+    setEditingSummaryId(call.id);
+    setSummaryDraft(call.summary || '');
+  };
+
+  const saveLocalSummary = (callId) => {
+    setHistoryCalls((prev) =>
+      prev.map((c) => (c.id === callId ? { ...c, summary: summaryDraft } : c))
+    );
+    setEditingSummaryId(null);
   };
 
   const filteredHistoryCalls = useMemo(() => {
@@ -874,201 +892,294 @@ export default function Campaigns({
         )}
         </div>
       </div>
-      {historyLead && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            aria-label="Close history"
-            onClick={() => setHistoryLead(null)}
-          />
-          <div className="surface-card relative z-10 max-h-[96vh] w-full max-w-5xl overflow-hidden p-0">
-            <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur sm:px-5 sm:py-4 dark:border-gray-800 dark:bg-gray-900/85">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900 sm:text-lg dark:text-white">
-                  Call history: {historyLead.name || 'Lead'}
-                </h3>
-                <p className="mt-0.5 text-xs text-slate-600 sm:text-sm dark:text-gray-400">{historyLead.phone || 'No phone'}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setHistoryLead(null)}
-                className="rounded-xl p-2 text-slate-600 transition-colors hover:bg-slate-100 dark:text-gray-300 dark:hover:bg-gray-800"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </header>
-            <div className="custom-scrollbar max-h-[calc(96vh-64px)] overflow-y-auto bg-slate-50/70 p-3 sm:p-5 dark:bg-gray-950/30">
+      {historyLead && (() => {
+        const selectedCall = filteredHistoryCalls[historyFocusIndex] || null;
+        return (
+          <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Call history">
+            {/* Backdrop */}
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              aria-label="Close history"
+              onClick={() => setHistoryLead(null)}
+            />
+
+            {/* Drawer panel */}
+            <div className="relative z-10 flex h-full w-full max-w-5xl flex-col bg-white shadow-2xl dark:bg-gray-900">
+
+              {/* ── Header ─────────────────────────────────────────────────── */}
+              <header className="flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900 sm:px-5 sm:py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-gray-500">Call history</p>
+                    <h3 className="mt-0.5 flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-white sm:text-lg">
+                      <User className="h-4 w-4 shrink-0 text-slate-400 dark:text-gray-500" aria-hidden />
+                      {historyLead.name || 'Unknown lead'}
+                    </h3>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-gray-400">
+                      <Phone className="h-3 w-3 shrink-0" aria-hidden />
+                      {historyLead.phone || 'No phone number'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryLead(null)}
+                    className="shrink-0 rounded-xl p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Filters + search row */}
+                {!historyLoading && !historyError && historyCalls.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { id: 'all', label: 'All' },
+                      { id: 'interested', label: 'Interested' },
+                      { id: 'follow_up', label: 'Follow up' },
+                      { id: 'not_interested', label: 'Not interested' },
+                      { id: 'has_recording', label: 'Has recording' },
+                      { id: 'has_transcript', label: 'Has transcript' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => { setHistoryFilter(opt.id); setHistoryFocusIndex(0); }}
+                        className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                          historyFilter === opt.id
+                            ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300'
+                            : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                    <div className="relative ml-auto">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400 dark:text-gray-500" />
+                      <input
+                        value={historySearch}
+                        onChange={(e) => { setHistorySearch(e.target.value); setHistoryFocusIndex(0); }}
+                        placeholder="Search summary/transcript"
+                        className="w-52 rounded-lg border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-xs text-slate-700 outline-none focus:border-brand-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={reloadHistory}
+                      title="Refresh history"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Refresh
+                    </button>
+                  </div>
+                )}
+              </header>
+
+              {/* ── Body ───────────────────────────────────────────────────── */}
               {historyLoading ? (
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm text-slate-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading call history...
+                <div className="flex flex-1 items-center justify-center gap-2 text-sm text-slate-600 dark:text-gray-400">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Loading call history…
                 </div>
               ) : historyError ? (
-                <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-                  {historyError}
-                </p>
+                <div className="flex flex-1 items-center justify-center p-8">
+                  <p className="max-w-sm rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
+                    {historyError}
+                  </p>
+                </div>
               ) : historyCalls.length === 0 ? (
-                <p className="rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm text-slate-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
-                  No completed calls found for this lead yet.
-                </p>
+                <div className="flex flex-1 items-center justify-center p-8">
+                  <p className="text-sm text-slate-500 dark:text-gray-400">No completed calls found for this lead yet.</p>
+                </div>
               ) : (
-                <div className="space-y-4 sm:space-y-5">
-                  <div className="rounded-xl border border-slate-200/90 bg-white/90 p-3 dark:border-gray-800 dark:bg-gray-900/60">
-                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {[
-                          { id: 'all', label: 'All' },
-                          { id: 'interested', label: 'Interested' },
-                          { id: 'follow_up', label: 'Follow up' },
-                          { id: 'not_interested', label: 'Not interested' },
-                          { id: 'has_recording', label: 'Has recording' },
-                          { id: 'has_transcript', label: 'Has transcript' },
-                        ].map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => setHistoryFilter(opt.id)}
-                            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                              historyFilter === opt.id
-                                ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300'
-                                : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="relative">
-                          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400 dark:text-gray-500" />
-                          <input
-                            value={historySearch}
-                            onChange={(e) => setHistorySearch(e.target.value)}
-                            placeholder="Search summary/transcript"
-                            className="w-56 rounded-lg border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-xs text-slate-700 outline-none focus:border-brand-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                          />
-                        </div>
+                /* ── Split pane ────────────────────────────────────────────── */
+                <div className="flex min-h-0 flex-1">
+
+                  {/* Left: call list */}
+                  <div className="custom-scrollbar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50 dark:border-gray-800 dark:bg-gray-950 sm:w-72">
+                    <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-gray-500">
+                      {filteredHistoryCalls.length} of {historyCalls.length} calls
+                    </div>
+                    {filteredHistoryCalls.length === 0 ? (
+                      <p className="px-3 py-4 text-xs text-slate-500 dark:text-gray-400">No calls match this filter.</p>
+                    ) : (
+                      filteredHistoryCalls.map((call, idx) => (
                         <button
+                          key={call.id}
                           type="button"
-                          onClick={reloadHistory}
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                          title="Refresh history"
+                          onClick={() => { setHistoryFocusIndex(idx); setEditingSummaryId(null); }}
+                          className={`w-full border-b px-3 py-3 text-left transition-colors dark:border-gray-800 ${
+                            idx === historyFocusIndex
+                              ? 'border-l-2 border-l-brand-500 bg-brand-500/8 dark:bg-brand-500/10'
+                              : 'border-l-2 border-l-transparent hover:bg-white dark:hover:bg-gray-900'
+                          }`}
                         >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                          Refresh
+                          <p className="text-xs font-medium text-slate-800 dark:text-gray-200">
+                            {new Date(call.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-gray-500">
+                            {new Date(call.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                            {' · '}{formatCallDuration(call.duration)}
+                          </p>
+                          <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${outcomeBadgeClass(call.outcome)}`}>
+                            {String(call.outcome || 'unknown').replace(/_/g, ' ')}
+                          </span>
+                          {call.summary && (
+                            <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-slate-500 dark:text-gray-500">
+                              {call.summary}
+                            </p>
+                          )}
                         </button>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-gray-400">
-                      <span>
-                        Showing {filteredHistoryCalls.length} of {historyCalls.length} calls
-                      </span>
-                      <span>Shortcuts: J/K navigate, Esc close</span>
-                    </div>
+                      ))
+                    )}
+                    <p className="px-3 py-2 text-[10px] text-slate-400 dark:text-gray-600">J/K to navigate · Esc to close</p>
                   </div>
-                  {filteredHistoryCalls.map((call, idx) => (
-                    <article
-                      key={call.id}
-                      className={`rounded-2xl border bg-white p-4 shadow-sm dark:bg-gray-900/50 ${
-                        idx === historyFocusIndex
-                          ? 'border-brand-500/40 ring-2 ring-brand-500/15 dark:border-brand-500/40'
-                          : 'border-slate-200/80 dark:border-gray-800'
-                      }`}
-                    >
-                      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs sm:gap-2">
-                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
-                          {new Date(call.createdAt).toLocaleString()}
-                        </span>
-                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
-                          {formatCallDuration(call.duration)}
-                        </span>
-                        <span
-                          className={`inline-flex items-center rounded-full border px-2.5 py-1 capitalize ${outcomeBadgeClass(
-                            call.outcome
-                          )}`}
-                        >
-                          {String(call.outcome || 'unknown').replace(/_/g, ' ')}
-                        </span>
+
+                  {/* Right: call detail */}
+                  <div className="custom-scrollbar flex-1 overflow-y-auto bg-white p-4 dark:bg-gray-900 sm:p-6">
+                    {!selectedCall ? (
+                      <div className="flex h-full items-center justify-center">
+                        <p className="text-sm text-slate-400 dark:text-gray-500">Select a call on the left to view details.</p>
                       </div>
-                      {call.summary ? (
-                        <div className="mb-3 rounded-xl border border-slate-200/90 bg-slate-50/80 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/60 sm:py-2.5">
-                          <div className="flex items-center justify-between gap-2">
+                    ) : (
+                      <div className="space-y-5">
+                        {/* Meta row */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
+                            {new Date(selectedCall.createdAt).toLocaleString()}
+                          </span>
+                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
+                            {formatCallDuration(selectedCall.duration)}
+                          </span>
+                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 capitalize font-medium ${outcomeBadgeClass(selectedCall.outcome)}`}>
+                            {String(selectedCall.outcome || 'unknown').replace(/_/g, ' ')}
+                          </span>
+                        </div>
+
+                        {/* Summary */}
+                        <div className="rounded-xl border border-slate-200/90 bg-slate-50/80 dark:border-gray-800 dark:bg-gray-950/60">
+                          <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 dark:border-gray-800">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-gray-500">Summary</p>
+                            <div className="flex items-center gap-1">
+                              {editingSummaryId === selectedCall.id ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveLocalSummary(selectedCall.id)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingSummaryId(null)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                                  >
+                                    <X className="h-3 w-3" />
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditSummary(selectedCall)}
+                                    title="Edit summary"
+                                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const ok = await copyToClipboard(String(selectedCall.summary || ''));
+                                      if (ok) setCopyFeedback(`summary-${selectedCall.id}`);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                    {copyFeedback === `summary-${selectedCall.id}` ? 'Copied' : 'Copy'}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="px-3 py-2.5">
+                            {editingSummaryId === selectedCall.id ? (
+                              <textarea
+                                autoFocus
+                                value={summaryDraft}
+                                onChange={(e) => setSummaryDraft(e.target.value)}
+                                rows={4}
+                                className="w-full resize-none rounded-lg border border-brand-400/60 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:ring-1 focus:ring-brand-400 dark:border-brand-600/50 dark:bg-gray-900 dark:text-gray-200"
+                              />
+                            ) : selectedCall.summary ? (
+                              <p className="text-sm leading-relaxed text-slate-700 dark:text-gray-300">
+                                {selectedCall.summary}
+                              </p>
+                            ) : (
+                              <p className="text-sm italic text-slate-400 dark:text-gray-500">No summary — click Edit to add one.</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Recording */}
+                        <CallRecordingPair userUrl={selectedCall.recordingUserUrl} agentUrl={selectedCall.recordingAgentUrl} />
+
+                        {/* Transcript */}
+                        <div className="rounded-xl border border-slate-200/90 bg-slate-50/80 dark:border-gray-800 dark:bg-gray-950/60">
+                          <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 dark:border-gray-800">
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-gray-500">
-                              Summary
+                              Conversation transcript
                             </p>
                             <button
                               type="button"
                               onClick={async () => {
-                                const ok = await copyToClipboard(String(call.summary || ''));
-                                if (ok) setCopyFeedback(`summary-${call.id}`);
-                              }}
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
-                            >
-                              <Copy className="h-3 w-3" />
-                              {copyFeedback === `summary-${call.id}` ? 'Copied' : 'Copy'}
-                            </button>
-                          </div>
-                          <p className="mt-1 text-sm leading-relaxed text-slate-700 dark:text-gray-300 sm:text-[15px]">
-                            {call.summary}
-                          </p>
-                        </div>
-                      ) : null}
-                      <div className="mb-3">
-                        <CallRecordingPair sticky userUrl={call.recordingUserUrl} agentUrl={call.recordingAgentUrl} />
-                      </div>
-                      <details className="group" open={idx === 0}>
-                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600 marker:text-slate-500 dark:text-gray-400">
-                          Conversation transcript
-                        </summary>
-                        <div className="mt-3 max-h-[52vh] space-y-2 overflow-y-auto rounded-xl border border-slate-200/90 bg-slate-50/80 p-2.5 text-sm dark:border-gray-800 dark:bg-gray-950/60 sm:max-h-64 sm:p-3">
-                          <div className="flex justify-end">
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const transcriptText = (Array.isArray(call.transcript) ? call.transcript : [])
+                                const text = (Array.isArray(selectedCall.transcript) ? selectedCall.transcript : [])
                                   .map((m) => `${m.role || 'message'}: ${m.content || ''}`)
                                   .join('\n');
-                                const ok = await copyToClipboard(transcriptText);
-                                if (ok) setCopyFeedback(`transcript-${call.id}`);
+                                const ok = await copyToClipboard(text);
+                                if (ok) setCopyFeedback(`transcript-${selectedCall.id}`);
                               }}
                               className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
                               <Copy className="h-3 w-3" />
-                              {copyFeedback === `transcript-${call.id}` ? 'Copied transcript' : 'Copy transcript'}
+                              {copyFeedback === `transcript-${selectedCall.id}` ? 'Copied' : 'Copy transcript'}
                             </button>
                           </div>
-                          {(Array.isArray(call.transcript) ? call.transcript : []).map((m, idx) => (
-                            <div
-                              key={`${call.id}-${idx}`}
-                              className={`rounded-lg px-2 py-1.5 sm:px-2.5 sm:py-2 ${
-                                m.role === 'assistant'
-                                  ? 'border border-brand-500/15 bg-brand-500/5 text-slate-700 dark:text-gray-200'
-                                  : 'border border-slate-200/80 bg-white text-slate-700 dark:border-gray-800 dark:bg-gray-900/80 dark:text-gray-300'
-                              }`}
-                            >
-                              <span className="mr-1 font-semibold capitalize">{m.role || 'message'}:</span>
-                              {m.content || ''}
-                            </div>
-                          ))}
-                          {(!Array.isArray(call.transcript) || call.transcript.length === 0) && (
-                            <p className="text-slate-500 dark:text-gray-500">No transcript saved for this call.</p>
-                          )}
+                          <div className="space-y-2 p-3">
+                            {(Array.isArray(selectedCall.transcript) ? selectedCall.transcript : []).length === 0 ? (
+                              <p className="text-sm text-slate-400 dark:text-gray-500">No transcript saved for this call.</p>
+                            ) : (
+                              (Array.isArray(selectedCall.transcript) ? selectedCall.transcript : []).map((m, mi) => (
+                                <div
+                                  key={`${selectedCall.id}-${mi}`}
+                                  className={`rounded-lg px-2.5 py-2 text-sm ${
+                                    m.role === 'assistant'
+                                      ? 'border border-brand-500/15 bg-brand-500/5 text-slate-700 dark:text-gray-200'
+                                      : 'border border-slate-200/80 bg-white text-slate-700 dark:border-gray-800 dark:bg-gray-900/80 dark:text-gray-300'
+                                  }`}
+                                >
+                                  <span className="mr-1.5 font-semibold capitalize text-slate-900 dark:text-white">{m.role === 'assistant' ? 'Assistant' : 'User'}:</span>
+                                  {m.content || ''}
+                                </div>
+                              ))
+                            )}
+                          </div>
                         </div>
-                      </details>
-                    </article>
-                  ))}
-                  {filteredHistoryCalls.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-600 dark:border-gray-700 dark:bg-gray-900/50 dark:text-gray-400">
-                      No calls match your current filter/search.
-                    </p>
-                  ) : null}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Clear List confirmation dialog ─────────────────────────────────── */}
       {clearConfirmOpen && (
