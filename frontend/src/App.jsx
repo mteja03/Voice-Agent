@@ -1,8 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { login, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
+import { listTenants, createTenant } from './services/tenants';
+import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
+import { getQuestionnaire } from './services/questionnairesApi';
+import { Building2, Loader2, Mic, PhoneCall, Sparkles, ShieldCheck } from 'lucide-react';
 import { useVoiceAgent } from './hooks/useVoiceAgent';
 import Sidebar from './components/Sidebar';
 import Dialer from './components/Dialer';
+import ErrorBoundary from './components/ErrorBoundary';
 import ThemeToggle from './components/ThemeToggle';
 import { Skeleton } from './components/ui/Skeleton';
 
@@ -11,11 +17,6 @@ const Campaigns = lazy(() => import('./components/Campaigns'));
 const AgentConfig = lazy(() => import('./components/AgentConfig'));
 const UserManagement = lazy(() => import('./components/UserManagement'));
 const QuestionnaireBuilder = lazy(() => import('./components/QuestionnaireBuilder'));
-import { login, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
-import { listTenants, createTenant } from './services/tenants';
-import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
-import { getQuestionnaire } from './services/questionnairesApi';
-import { Building2, Loader2, Mic, PhoneCall, Sparkles, ShieldCheck } from 'lucide-react';
 
 const SESSION_ID = uuidv4();
 
@@ -743,34 +744,36 @@ export default function App() {
               />
             )}
             {activeTab === 'dialer' && (
-              <Dialer
-                status={status}
-                processingStage={processingStage}
-                socketReady={socketReady}
-                reconnecting={reconnecting}
-                reconnectAttempt={reconnectAttempt}
-                turns={turns}
-                errorMsg={errorMsg}
-                closeDetected={closeDetected}
-                vadLoading={vadLoading}
-                vadError={vadError}
-                isVadListening={isVadListening}
-                isPushToTalkMode={isPushToTalkMode}
-                startVad={startVad}
-                pauseVad={pauseVad}
-                endCall={endCall}
-                retryIntro={retryIntro}
-                activeLead={activeLeadForDialer}
-                leads={leads}
-                handleNextLeadQuick={handleNextLeadQuick}
-                settings={settings}
-                summaryNote={callNotice}
-                lastCallSummary={lastCallSummary}
-                onRetryConnection={retryConnection}
-                onOpenCampaigns={() => setActiveTab('campaigns')}
-                startPushToTalk={startPushToTalk}
-                stopPushToTalk={stopPushToTalk}
-              />
+              <ErrorBoundary label="Dialer">
+                <Dialer
+                  status={status}
+                  processingStage={processingStage}
+                  socketReady={socketReady}
+                  reconnecting={reconnecting}
+                  reconnectAttempt={reconnectAttempt}
+                  turns={turns}
+                  errorMsg={errorMsg}
+                  closeDetected={closeDetected}
+                  vadLoading={vadLoading}
+                  vadError={vadError}
+                  isVadListening={isVadListening}
+                  isPushToTalkMode={isPushToTalkMode}
+                  startVad={startVad}
+                  pauseVad={pauseVad}
+                  endCall={endCall}
+                  retryIntro={retryIntro}
+                  activeLead={activeLeadForDialer}
+                  leads={leads}
+                  handleNextLeadQuick={handleNextLeadQuick}
+                  settings={settings}
+                  summaryNote={callNotice}
+                  lastCallSummary={lastCallSummary}
+                  onRetryConnection={retryConnection}
+                  onOpenCampaigns={() => setActiveTab('campaigns')}
+                  startPushToTalk={startPushToTalk}
+                  stopPushToTalk={stopPushToTalk}
+                />
+              </ErrorBoundary>
             )}
             {activeTab === 'agent-config' && (
               <AgentConfig

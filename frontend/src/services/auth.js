@@ -1,9 +1,7 @@
-import { apiFetch } from './apiFetch';
+import { apiFetch, BACKEND_URL } from './apiFetch';
 import { saveAuthSession } from './authSession';
 
 export * from './authSession';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 
 async function authRequest(path, payload, { skipAuth = true } = {}) {
   return apiFetch(`${BACKEND_URL}/api/auth/${path}`, {

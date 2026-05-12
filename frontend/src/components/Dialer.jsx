@@ -12,7 +12,7 @@ export default function Dialer({
   socketReady = true,
   reconnecting = false,
   reconnectAttempt = 0,
-  turns,
+  turns = [],
   errorMsg,
   closeDetected,
   vadLoading,
@@ -23,7 +23,7 @@ export default function Dialer({
   endCall,
   retryIntro,
   activeLead,
-  leads,
+  leads = [],
   handleNextLeadQuick,
   settings,
   summaryNote,
@@ -79,7 +79,7 @@ export default function Dialer({
   const showConnectionRetry =
     Boolean(errorMsg) &&
     /connect|backend|Disconnected|Unable to connect|Reconnecting/i.test(errorMsg);
-  const activeLeadIndex = activeLead ? leads.findIndex((lead) => lead.id === activeLead.id) : -1;
+  const activeLeadIndex = activeLead ? (leads?.findIndex((lead) => lead.id === activeLead.id) ?? -1) : -1;
 
   useEffect(() => {
     if (!endConfirmOpen) return;

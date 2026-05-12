@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Plus,
-  Search,
   Building,
   FileText,
   Loader2,
@@ -53,16 +52,10 @@ export default function AgentConfig({
   const [kbLoading, setKbLoading] = useState(false);
   const [kbError, setKbError] = useState('');
   const [kbPane, setKbPane] = useState('company'); // 'company' or 'projects'
-  const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
 
   const selectedProject = useMemo(() => projects.find((p) => p.id === selectedId) || null, [projects, selectedId]);
-  const visibleProjects = useMemo(() => {
-    if (!search) return projects;
-    const lower = search.toLowerCase();
-    return projects.filter(p => (p.name && p.name.toLowerCase().includes(lower)) || (p.location && p.location.toLowerCase().includes(lower)));
-  }, [projects, search]);
 
   const loadKb = useCallback(async () => {
     setKbLoading(true);
