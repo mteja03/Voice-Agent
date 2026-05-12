@@ -11,7 +11,7 @@ export default function Sidebar({ activeTab, onTabChange, onTabHover, canManageU
   ];
 
   return (
-    <aside className="sticky top-0 flex h-screen w-72 shrink-0 flex-col p-4 lg:p-6 z-20">
+    <aside aria-label="Main navigation" className="sticky top-0 flex h-screen w-72 shrink-0 flex-col p-4 lg:p-6 z-20">
       <div className="surface-card flex h-full w-full flex-col overflow-hidden !rounded-[2rem] border border-white/60 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
         <div className="flex h-24 shrink-0 items-center px-6 relative overflow-hidden border-b border-slate-200/50 dark:border-white/5">
           {/* Subtle gradient glow behind logo */}
@@ -28,7 +28,7 @@ export default function Sidebar({ activeTab, onTabChange, onTabHover, canManageU
           </div>
         </div>
 
-        <nav className="custom-scrollbar flex-1 space-y-2 overflow-y-auto px-4 py-6 relative z-10">
+        <nav role="navigation" aria-label="Sections" className="custom-scrollbar flex-1 space-y-2 overflow-y-auto px-4 py-6 relative z-10">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -36,6 +36,8 @@ export default function Sidebar({ activeTab, onTabChange, onTabHover, canManageU
               <button
                 key={tab.id}
                 type="button"
+                role="menuitem"
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => onTabChange(tab.id)}
                 onMouseEnter={() => onTabHover?.(tab.id)}
                 onFocus={() => onTabHover?.(tab.id)}

@@ -12,6 +12,7 @@ import {
   Loader2,
   Copy,
   Check,
+  Trash2,
 } from 'lucide-react';
 import { listProjects, createProject, updateProject, deleteProject, getCompanyInfo, updateCompanyInfo } from '../services/kbApi';
 import KnowledgeBaseProjectForm from './KnowledgeBaseProjectForm';
@@ -54,6 +55,7 @@ export default function AgentConfig({
   const [kbPane, setKbPane] = useState('company'); // 'company' or 'projects'
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const selectedProject = useMemo(() => projects.find((p) => p.id === selectedId) || null, [projects, selectedId]);
 
@@ -183,6 +185,25 @@ export default function AgentConfig({
     }
   };
 
+  const handleDeleteProject = async (projectId, projectName) => {
+    if (!window.confirm(`Delete project "${projectName}"? This cannot be undone.`)) return;
+    try {
+      setDeletingId(projectId);
+      await deleteProject(projectId);
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (selectedId === projectId) {
+        setSelectedId(null);
+        setCreating(false);
+      }
+      pushToast('Project deleted');
+    } catch (err) {
+      setKbError(err.message);
+      pushToast('Failed to delete project', 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full bg-transparent text-slate-800 dark:text-gray-200 relative">
       <header className="px-8 py-6 border-b border-white/10 dark:border-white/5 animate-slide-up" style={{ animationDelay: '300ms' }}>
@@ -205,7 +226,7 @@ export default function AgentConfig({
           </div>
         ) : null}
 
-        <div className="flex gap-6 mt-6 border-b border-slate-200 dark:border-gray-800">
+        <div role="tablist" aria-label="Agent configuration sections" className="flex gap-6 mt-6 border-b border-slate-200 dark:border-gray-800">
           <TabButton id="general" label="General" icon={Settings} active={activeTab === 'general'} onClick={setActiveTab} />
           <TabButton id="knowledge-base" label="Knowledge Base" icon={BookOpen} active={activeTab === 'knowledge-base'} onClick={setActiveTab} />
           <TabButton id="conversation" label="Conversation" icon={MessageSquare} active={activeTab === 'conversation'} onClick={setActiveTab} />
@@ -344,13 +365,28 @@ export default function AgentConfig({
                     </div>
                   )}
                   {projects.map(p => (
-                    <button
+                    <div
                       key={p.id}
-                      onClick={() => { setKbPane('projects'); setSelectedId(p.id); setCreating(false); }}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${kbPane === 'projects' && selectedId === p.id && !creating ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400' : 'text-slate-600 hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-800'}`}
+                      className={`group flex items-center gap-1 rounded-lg transition-colors ${kbPane === 'projects' && selectedId === p.id && !creating ? 'bg-brand-500/10' : 'hover:bg-slate-100 dark:hover:bg-gray-800'}`}
                     >
-                      {p.name}
-                    </button>
+                      <button
+                        onClick={() => { setKbPane('projects'); setSelectedId(p.id); setCreating(false); }}
+                        className={`flex-1 text-left px-3 py-2 text-sm transition-colors truncate ${kbPane === 'projects' && selectedId === p.id && !creating ? 'text-brand-600 dark:text-brand-400' : 'text-slate-600 dark:text-gray-400'}`}
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete project ${p.name}`}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteProject(p.id, p.name); }}
+                        disabled={deletingId === p.id}
+                        className="shrink-0 p-1.5 mr-1 rounded opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 dark:text-gray-600 dark:hover:text-red-400 transition-all disabled:opacity-50"
+                      >
+                        {deletingId === p.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
+                          : <Trash2 className="w-3.5 h-3.5" aria-hidden />}
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -518,8 +554,15 @@ export default function AgentConfig({
                 value={settings.introTemplate}
                 onChange={(e) => handleUpdateSetting('introTemplate', e.target.value)}
                 rows={4}
+                maxLength={600}
                 className="w-full bg-white border border-slate-300 rounded-xl p-4 text-sm text-slate-800 focus:outline-none focus:border-brand-500 custom-scrollbar dark:bg-gray-950 dark:border-gray-800 dark:text-gray-300"
               />
+              <div className="flex justify-end mt-1">
+                <span className={`text-xs ${(settings.introTemplate?.length || 0) > 500 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-slate-400 dark:text-gray-600'}`}>
+                  {settings.introTemplate?.length || 0} / 600 chars
+                  {(settings.introTemplate?.length || 0) > 500 && ' — keep intro short for faster response'}
+                </span>
+              </div>
             </section>
 
             <section className="surface-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '500ms' }}>
@@ -567,18 +610,30 @@ export default function AgentConfig({
       </div>
 
       {/* Toasts */}
-      <div className="absolute bottom-6 right-6 z-[60] space-y-3 pointer-events-none">
+      <div className="absolute bottom-6 right-6 z-[60] space-y-3">
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`px-4 py-3 rounded-xl border shadow-xl flex items-center gap-3 animate-slide-up ${
+            role="status"
+            aria-live="polite"
+            className={`px-4 py-3 rounded-xl border shadow-xl flex items-center gap-3 animate-slide-up max-w-sm ${
               toast.tone === 'error'
                 ? 'bg-red-50 text-red-900 border-red-200 dark:bg-red-950/90 dark:text-red-200 dark:border-red-800/60'
                 : 'bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/90 dark:text-emerald-200 dark:border-emerald-800/60'
             }`}
           >
-            {toast.tone === 'error' ? <AlertCircle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
-            <span className="text-sm font-medium">{toast.message}</span>
+            {toast.tone === 'error' ? <AlertCircle className="w-5 h-5 shrink-0" /> : <CheckCircle2 className="w-5 h-5 shrink-0" />}
+            <span className="text-sm font-medium flex-1">{toast.message}</span>
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+              className="shrink-0 ml-1 p-1 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-opacity"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         ))}
       </div>
@@ -670,6 +725,9 @@ function ConversationPlaceholderReference() {
 function TabButton({ id, label, icon: Icon, active, onClick }) {
   return (
     <button
+      role="tab"
+      aria-selected={active}
+      aria-controls={`tabpanel-${id}`}
       onClick={() => onClick(id)}
       className={`flex items-center gap-2 pb-4 text-sm font-medium transition-colors border-b-2 ${
         active ? 'text-brand-600 border-brand-600 dark:text-brand-400 dark:border-brand-400' : 'text-slate-500 border-transparent hover:text-slate-800 dark:text-gray-500 dark:hover:text-gray-300'

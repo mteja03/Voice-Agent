@@ -35,6 +35,9 @@ export default function Dialer({
   stopPushToTalk,
 }) {
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const [nextLeadConfirmOpen, setNextLeadConfirmOpen] = useState(false);
+  const endCancelBtnRef = React.useRef(null);
+  const nextLeadCancelBtnRef = React.useRef(null);
   const pttHeldRef = React.useRef(false);
 
   // Declare hasLead early so the useEffect dependency array below can reference it
@@ -81,14 +84,23 @@ export default function Dialer({
     /connect|backend|Disconnected|Unable to connect|Reconnecting/i.test(errorMsg);
   const activeLeadIndex = activeLead ? (leads?.findIndex((lead) => lead.id === activeLead.id) ?? -1) : -1;
 
+  // Focus the Cancel button when the end-call dialog opens (focus trap + keyboard nav)
   useEffect(() => {
-    if (!endConfirmOpen) return;
+    if (endConfirmOpen) endCancelBtnRef.current?.focus();
+  }, [endConfirmOpen]);
+
+  useEffect(() => {
+    if (nextLeadConfirmOpen) nextLeadCancelBtnRef.current?.focus();
+  }, [nextLeadConfirmOpen]);
+
+  useEffect(() => {
+    if (!endConfirmOpen && !nextLeadConfirmOpen) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') setEndConfirmOpen(false);
+      if (e.key === 'Escape') { setEndConfirmOpen(false); setNextLeadConfirmOpen(false); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [endConfirmOpen]);
+  }, [endConfirmOpen, nextLeadConfirmOpen]);
 
   const requestEndCall = () => {
     if (status === 'idle') return;
@@ -158,6 +170,7 @@ export default function Dialer({
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-2">
               <button
+                ref={endCancelBtnRef}
                 type="button"
                 onClick={() => setEndConfirmOpen(false)}
                 className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100 motion-safe:transition-colors dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 min-h-[44px] sm:min-h-0"
@@ -202,10 +215,12 @@ export default function Dialer({
           status={status}
           hasLead={hasLead}
         />
-        <p className="text-[11px] text-slate-600 dark:text-gray-500 leading-snug px-0.5">
-          <span className="text-slate-700 dark:text-gray-400 font-medium">Barge-in:</span> while the assistant is speaking, you can interrupt—your
-          mic is prioritized after a brief guard window, or use Pause to stop listening.
-        </p>
+        {!isPushToTalkMode && (
+          <p className="text-[11px] text-slate-600 dark:text-gray-500 leading-snug px-0.5">
+            <span className="text-slate-700 dark:text-gray-400 font-medium">Barge-in:</span> while the assistant is speaking, you can interrupt—your
+            mic is prioritized after a brief guard window, or use Pause to stop listening.
+          </p>
+        )}
 
         <div className="flex-shrink-0">
           <ActiveLeadCard lead={activeLead} leadIndex={Math.max(activeLeadIndex, 0)} totalLeads={leads.length} />
@@ -327,7 +342,9 @@ export default function Dialer({
             <button
               type="button"
               onClick={retryIntro}
-              className="text-slate-600 hover:text-slate-900 dark:text-gray-400 dark:hover:text-white underline-offset-2 hover:underline min-h-[44px] sm:min-h-0 px-1"
+              disabled={status !== 'idle'}
+              title={status !== 'idle' ? 'Wait for the current response to finish' : 'Replay the opening introduction'}
+              className="text-slate-600 hover:text-slate-900 dark:text-gray-400 dark:hover:text-white underline-offset-2 hover:underline disabled:opacity-40 disabled:no-underline min-h-[44px] sm:min-h-0 px-1"
             >
               Replay intro
             </button>
@@ -336,7 +353,7 @@ export default function Dialer({
             </span>
             <button
               type="button"
-              onClick={handleNextLeadQuick}
+              onClick={() => turns.length > 0 ? setNextLeadConfirmOpen(true) : handleNextLeadQuick?.()}
               className="text-slate-600 hover:text-slate-900 dark:text-gray-400 dark:hover:text-white underline-offset-2 hover:underline min-h-[44px] sm:min-h-0 px-1"
             >
               Next lead
@@ -344,6 +361,23 @@ export default function Dialer({
           </div>
         </div>
       </div>
+
+      {/* Next lead confirmation dialog */}
+      {nextLeadConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+          <button type="button" className="absolute inset-0 bg-black/50 backdrop-blur-sm" aria-label="Dismiss" onClick={() => setNextLeadConfirmOpen(false)} />
+          <div role="dialog" aria-modal="true" aria-labelledby="next-lead-title" className="surface-card relative z-10 w-full max-w-md p-6 shadow-2xl">
+            <h2 id="next-lead-title" className="text-lg font-semibold text-slate-900 dark:text-white">Move to next lead?</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-gray-400">
+              You have {turns.length} {turns.length === 1 ? 'exchange' : 'exchanges'} in this session. Moving to the next lead will end the current call without saving a summary.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button ref={nextLeadCancelBtnRef} type="button" onClick={() => setNextLeadConfirmOpen(false)} className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 min-h-[44px] sm:min-h-0">Cancel</button>
+              <button type="button" onClick={() => { setNextLeadConfirmOpen(false); handleNextLeadQuick?.(); }} className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-black hover:bg-brand-400 min-h-[44px] sm:min-h-0">Next lead</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

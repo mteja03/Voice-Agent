@@ -155,14 +155,14 @@ export default function RecordButton({
             onPointerUp={handlePttUp}
             onPointerCancel={handlePttUp}
             onPointerLeave={handlePttUp}
-            disabled={blockedStart || isProcessing}
-            aria-label={pttHeld || isListening ? 'Release to send voice' : 'Hold to speak'}
+            disabled={blockedStart || isProcessing || isSpeaking}
+            aria-label={pttHeld || isListening ? 'Release to send voice' : isSpeaking ? 'Agent is speaking' : 'Hold to speak'}
             aria-pressed={pttHeld || isListening}
             style={{ touchAction: 'none', userSelect: 'none' }}
             className={`
               relative z-10 w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center
               transition-all duration-200 ease-out select-none focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-400/50
-              ${blockedStart || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+              ${blockedStart || isProcessing || isSpeaking ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
               ${pttHeld || isListening
                 ? 'bg-red-500 shadow-2xl border border-red-300/40 scale-110'
                 : isSpeaking

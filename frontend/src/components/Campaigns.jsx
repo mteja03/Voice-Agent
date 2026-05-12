@@ -127,6 +127,10 @@ export default function Campaigns({
   const [bulkOutcome, setBulkOutcome] = useState('follow_up');
   const [newCampaignOpen, setNewCampaignOpen] = useState(false);
   const [newCampaignName, setNewCampaignName] = useState('');
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [csvDragActive, setCsvDragActive] = useState(false);
   const [questionnaires, setQuestionnaires] = useState([]);
   const [historyLead, setHistoryLead] = useState(null);
@@ -296,20 +300,13 @@ export default function Campaigns({
 
   const applyBulkOutcome = () => {
     if (selectedIds.size === 0) return;
-    const ts = new Date().toISOString();
-    onLeadsChange(
-      leads.map((l) =>
-        selectedIds.has(l.id) ? { ...l, lastOutcome: bulkOutcome, lastUpdatedAt: ts } : l
-      )
-    );
-    setSelectedIds(new Set());
+    setBulkConfirmOpen(true);
   };
 
   const clearAllLeads = () => {
-    if (confirm('Are you sure you want to clear all leads in this campaign only?')) {
-      onLeadsChange([]);
-      onActiveLeadChange(null);
-    }
+    onLeadsChange([]);
+    onActiveLeadChange(null);
+    setClearConfirmOpen(false);
   };
 
   const submitNewCampaign = (e) => {
@@ -320,11 +317,28 @@ export default function Campaigns({
     setNewCampaignOpen(false);
   };
 
-  const renameActiveCampaign = () => {
+  const openRename = () => {
     if (!activeCampaign) return;
-    const next = window.prompt('Campaign name', activeCampaign.name);
-    if (next === null) return;
-    onRenameCampaign(activeCampaignId, next);
+    setRenameDraft(activeCampaign.name);
+    setRenameOpen(true);
+  };
+
+  const submitRename = (e) => {
+    e?.preventDefault();
+    const name = renameDraft.trim();
+    if (name) onRenameCampaign(activeCampaignId, name);
+    setRenameOpen(false);
+  };
+
+  const applyBulkOutcomeConfirmed = () => {
+    const ts = new Date().toISOString();
+    onLeadsChange(
+      leads.map((l) =>
+        selectedIds.has(l.id) ? { ...l, lastOutcome: bulkOutcome, lastUpdatedAt: ts } : l
+      )
+    );
+    setSelectedIds(new Set());
+    setBulkConfirmOpen(false);
   };
 
   const handleStartCall = (lead) => {
@@ -411,7 +425,7 @@ export default function Campaigns({
         <div className="flex items-center gap-3">
           {hasLeads && (
             <button
-              onClick={clearAllLeads}
+              onClick={() => setClearConfirmOpen(true)}
               className="px-4 py-2 rounded-xl text-sm font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 transition-colors flex items-center gap-2"
             >
               <Trash2 className="w-4 h-4" />
@@ -545,7 +559,7 @@ export default function Campaigns({
               )}
               <button
                 type="button"
-                onClick={renameActiveCampaign}
+                onClick={openRename}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-slate-800 bg-slate-200 border border-slate-300 hover:bg-slate-300 dark:text-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700 min-h-[44px]"
               >
                 <Pencil className="w-4 h-4" aria-hidden />
@@ -1051,6 +1065,64 @@ export default function Campaigns({
                   ) : null}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Clear List confirmation dialog ─────────────────────────────────── */}
+      {clearConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+          <button type="button" className="absolute inset-0 bg-black/50 backdrop-blur-sm" aria-label="Dismiss" onClick={() => setClearConfirmOpen(false)} />
+          <div role="dialog" aria-modal="true" aria-labelledby="clear-title" className="surface-card relative z-10 w-full max-w-md p-6 shadow-2xl">
+            <h2 id="clear-title" className="text-lg font-semibold text-slate-900 dark:text-white">Clear all leads?</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-gray-400">
+              This will permanently remove all {leads.length} leads from this campaign. This action cannot be undone.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" autoFocus onClick={() => setClearConfirmOpen(false)} className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-sm font-medium text-slate-800 hover:bg-slate-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">Cancel</button>
+              <button type="button" onClick={clearAllLeads} className="px-4 py-2 rounded-lg bg-red-600 text-sm font-medium text-white hover:bg-red-500">Clear all leads</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Rename campaign dialog ─────────────────────────────────────────── */}
+      {renameOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+          <button type="button" className="absolute inset-0 bg-black/50 backdrop-blur-sm" aria-label="Dismiss" onClick={() => setRenameOpen(false)} />
+          <div role="dialog" aria-modal="true" aria-labelledby="rename-title" className="surface-card relative z-10 w-full max-w-md p-6 shadow-2xl">
+            <h2 id="rename-title" className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Rename campaign</h2>
+            <form onSubmit={submitRename}>
+              <input
+                autoFocus
+                type="text"
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                placeholder="Campaign name"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => setRenameOpen(false)} className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-sm font-medium text-slate-800 hover:bg-slate-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200">Cancel</button>
+                <button type="submit" disabled={!renameDraft.trim()} className="px-4 py-2 rounded-lg bg-brand-500 text-sm font-medium text-black hover:bg-brand-400 disabled:opacity-40">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk outcome confirmation dialog ───────────────────────────────── */}
+      {bulkConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+          <button type="button" className="absolute inset-0 bg-black/50 backdrop-blur-sm" aria-label="Dismiss" onClick={() => setBulkConfirmOpen(false)} />
+          <div role="dialog" aria-modal="true" aria-labelledby="bulk-title" className="surface-card relative z-10 w-full max-w-md p-6 shadow-2xl">
+            <h2 id="bulk-title" className="text-lg font-semibold text-slate-900 dark:text-white">Apply bulk outcome?</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-gray-400">
+              Set <span className="font-medium text-slate-900 dark:text-white capitalize">{bulkOutcome.replace('_', ' ')}</span> on <span className="font-medium text-slate-900 dark:text-white">{selectedIds.size} leads</span>? This will overwrite their current outcomes.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" autoFocus onClick={() => setBulkConfirmOpen(false)} className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-sm font-medium text-slate-800 hover:bg-slate-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200">Cancel</button>
+              <button type="button" onClick={applyBulkOutcomeConfirmed} className="px-4 py-2 rounded-lg bg-brand-500 text-sm font-medium text-black hover:bg-brand-400">Apply</button>
             </div>
           </div>
         </div>
