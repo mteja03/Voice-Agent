@@ -406,12 +406,52 @@ io.on('connection', (socket) => {
     }
   }
 
+  /**
+   * streamAssistantResponse — parallel TTS pipeline
+   *
+   * Previous design: the LLM `for await` loop called `await synthesizeSpeech()`
+   * inline, blocking the stream reader for ~2 s per chunk. With 3 sentences the
+   * loop was frozen for 6 s total while the Sarvam TTS API processed each one.
+   *
+   * New design — two-phase pipeline:
+   *   Phase 1 (LLM drain): read every token, split sentences as they arrive, and
+   *     immediately fire each TTS call as a Promise without awaiting it. The LLM
+   *     stream is never blocked by TTS network I/O.
+   *   Phase 2 (emit in order): iterate the promise array and emit each audio chunk
+   *     to the client as it resolves. Because all TTS calls started almost
+   *     simultaneously, the longest individual call determines total wait time
+   *     instead of their sum.
+   *
+   * Expected improvement: 3 × 2000 ms sequential → ~2000 ms parallel (+overlap).
+   * TTF audio (time to first audio heard) also drops because chunk-1 TTS starts
+   * the moment the first sentence boundary is seen in the LLM stream rather than
+   * waiting for later chunks to finish.
+   */
   async function streamAssistantResponse({ stream, signal, socket, companyId, sessionId, ttsModel, ttsVoice, languageMode, timingMeta }) {
     let sentenceBuffer = '';
     let fullAssistantMessage = '';
     let ttsChunks = 0;
     let ttsTotalMs = 0;
     let firstAudioAtMs = null;
+
+    /**
+     * Wrap a TTS call in a promise that always resolves (never rejects) so the
+     * emit loop can handle errors gracefully without short-circuiting the queue.
+     */
+    function queueTts(sentence, isFlush = false) {
+      const label = isFlush ? '[TTS Flush]' : '[TTS Chunk]';
+      console.log(`${label} Queuing: "${sentence}"`);
+      const ttsStart = nowMs();
+      const voice   = ttsVoice  || 'shubh';
+      const model   = ttsModel  || 'bulbul:v3';
+      const langCode = resolveLanguageCode(languageMode);
+      return synthesizeSpeech(sentence, voice, model, langCode)
+        .then((audio64) => ({ ok: true, audio64, sentence, ttsMs: nowMs() - ttsStart }))
+        .catch((err)    => ({ ok: false, err, sentence, ttsMs: nowMs() - ttsStart }));
+    }
+
+    // ── Phase 1: drain the LLM stream, fire TTS calls immediately ────────────
+    const ttsPipeline = []; // ordered array of TTS promises
 
     for await (const chunk of stream) {
       if (signal.aborted) {
@@ -423,63 +463,45 @@ io.on('connection', (socket) => {
       sentenceBuffer += token;
       fullAssistantMessage += token;
 
-      const split = splitForTts(sentenceBuffer, ttsChunks === 0);
+      const split = splitForTts(sentenceBuffer, ttsPipeline.length === 0);
       if (split) {
         const sentence = normalizeTtsText(split.chunk);
         sentenceBuffer = split.rest;
-        if (signal.aborted || !sentence || sentence.length < 3) break;
-        try {
-          console.log(`[TTS Chunk] Synthesising: "${sentence}"`);
-          const ttsStart = nowMs();
-          const audioBase64 = await synthesizeSpeech(
-            sentence, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', resolveLanguageCode(languageMode)
-          );
-          const ttsMs = nowMs() - ttsStart;
-          ttsTotalMs += ttsMs;
-          ttsChunks += 1;
-          if (!firstAudioAtMs) firstAudioAtMs = nowMs();
-          if (!signal.aborted) {
-            emitTtsAudioChunk(socket, companyId, sessionId, {
-              audioBuffer: Buffer.from(audioBase64, 'base64'),
-              text: sentence,
-            });
-          }
-        } catch (ttsErr) {
-          console.error('[TTS Chunk Error]', ttsErr.message);
-          emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: sentence });
-        }
+        if (!sentence || sentence.length < 3 || signal.aborted) continue;
+        // Fire TTS immediately — do NOT await; store the promise for phase 2.
+        ttsPipeline.push(queueTts(sentence));
       }
     }
 
+    // Handle any remaining buffered text after the stream closes.
     if (!signal.aborted && sentenceBuffer.trim().length > 3) {
-      try {
-        let sentence = stripTtsFlushArtifacts(normalizeTtsText(sentenceBuffer));
-        sentence = trimLikelyClippedTeluguTail(sentence);
-        if (shouldFlushTtsRemainder(sentence)) {
-          console.log(`[TTS Flush] Synthesising remainder: "${sentence}"`);
-          const ttsStart = nowMs();
-          const audioBase64 = await synthesizeSpeech(
-            sentence, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', resolveLanguageCode(languageMode)
-          );
-          const ttsMs = nowMs() - ttsStart;
-          ttsTotalMs += ttsMs;
-          ttsChunks += 1;
-          if (!firstAudioAtMs) firstAudioAtMs = nowMs();
-          if (!signal.aborted) {
-            emitTtsAudioChunk(socket, companyId, sessionId, {
-              audioBuffer: Buffer.from(audioBase64, 'base64'),
-              text: sentence,
-            });
-          }
-        } else if (sentence) {
-          console.log(`[TTS Flush] Dropping short incomplete tail (${sentence.length} chars): "${sentence}"`);
-        }
-      } catch (ttsErr) {
-        console.error('[TTS Flush Error]', ttsErr.message);
+      let sentence = stripTtsFlushArtifacts(normalizeTtsText(sentenceBuffer));
+      sentence = trimLikelyClippedTeluguTail(sentence);
+      if (shouldFlushTtsRemainder(sentence)) {
+        ttsPipeline.push(queueTts(sentence, true));
+      } else if (sentence) {
+        console.log(`[TTS Flush] Dropping short incomplete tail (${sentence.length} chars): "${sentence}"`);
+      }
+    }
+
+    // ── Phase 2: emit chunks in order as each promise resolves ───────────────
+    for (const ttsPromise of ttsPipeline) {
+      if (signal.aborted) break;
+      const result = await ttsPromise; // resolves immediately if already done
+      ttsTotalMs += result.ttsMs;
+      ttsChunks += 1;
+      if (!firstAudioAtMs) firstAudioAtMs = nowMs();
+      if (signal.aborted) break;
+
+      if (result.ok) {
         emitTtsAudioChunk(socket, companyId, sessionId, {
-          audioBuffer: null,
-          text: trimLikelyClippedTeluguTail(stripTtsFlushArtifacts(normalizeTtsText(sentenceBuffer))),
+          audioBuffer: Buffer.from(result.audio64, 'base64'),
+          text: result.sentence,
         });
+      } else {
+        console.error('[TTS Error]', result.err?.message);
+        // Emit text-only so the client transcript still updates.
+        emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: result.sentence });
       }
     }
 
@@ -492,10 +514,9 @@ io.on('connection', (socket) => {
       const doneAt = nowMs();
       const toFirstAudioMs = firstAudioAtMs ? firstAudioAtMs - timingMeta.requestStartMs : null;
 
-      // Include timing breakdown so the client UI can display per-turn latency badges.
       const latency = timingMeta ? {
         total: Math.round(doneAt - timingMeta.requestStartMs),
-        stt:   timingMeta.sttMs        != null ? Math.round(timingMeta.sttMs)         : null,
+        stt:   timingMeta.sttMs           != null ? Math.round(timingMeta.sttMs)           : null,
         llm:   timingMeta.llmFirstTokenMs != null ? Math.round(timingMeta.llmFirstTokenMs) : null,
         tts:   Math.round(ttsTotalMs),
         ttf:   toFirstAudioMs != null ? Math.round(toFirstAudioMs) : null,

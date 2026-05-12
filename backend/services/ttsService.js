@@ -16,7 +16,9 @@ async function synthesizeSpeech(text, speaker = 'shubh', model = 'bulbul:v3', la
     model,
     pace: 1.0,
     speech_sample_rate: 16000,
-    enable_preprocessing: true,
+    // Preprocessing adds ~200-300 ms per call. The LLM already outputs clean
+    // Telugu script so normalization is not needed here.
+    enable_preprocessing: false,
     output_audio_codec: 'mp3',
   };
 
