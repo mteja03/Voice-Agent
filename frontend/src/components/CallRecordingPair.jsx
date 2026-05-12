@@ -49,14 +49,14 @@ export default function CallRecordingPair({
 
       setIsBuilding(true);
       try {
-        const stitchedBlob = await stitchAudioSequentially(userUrl, agentUrl, ctrl.signal);
+        const mixedBlob = await mixAudioTracks(userUrl, agentUrl, ctrl.signal);
         if (cancelled) return;
-        objectUrl = URL.createObjectURL(stitchedBlob);
+        objectUrl = URL.createObjectURL(mixedBlob);
         setReviewUrl(objectUrl);
       } catch (error) {
         if (cancelled || ctrl.signal.aborted) return;
         setBuildError(
-          'Could not build a single review clip. Link may be expired or blocked. Use download links below or refresh for new signed URLs.'
+          'Could not build the mixed review clip. Link may be expired or blocked by browser/network policy. Use the individual download links below or refresh for new signed URLs.'
         );
       } finally {
         if (!cancelled) setIsBuilding(false);
@@ -74,11 +74,11 @@ export default function CallRecordingPair({
 
   const sourceLabel = useMemo(() => {
     if (hasUser && hasAgent && reviewUrl?.startsWith('blob:')) {
-      return 'Single review clip (customer + agent)';
+      return 'Mixed — customer (L) · agent (R)';
     }
-    if (hasUser && !hasAgent) return 'Customer recording';
-    if (!hasUser && hasAgent) return 'Agent recording';
-    if (hasUser && hasAgent) return 'Review clip';
+    if (hasUser && !hasAgent) return 'Customer recording only';
+    if (!hasUser && hasAgent) return 'Agent recording only';
+    if (hasUser && hasAgent) return 'Mixing tracks…';
     return '';
   }, [hasUser, hasAgent, reviewUrl]);
 
@@ -115,7 +115,7 @@ export default function CallRecordingPair({
       {isBuilding ? (
         <div className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-400">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          Preparing single audio clip...
+          Mixing customer + agent tracks…
         </div>
       ) : reviewUrl && !playbackError ? (
         <>
@@ -201,18 +201,26 @@ function PlaybackError({ density, hint }) {
   );
 }
 
-async function stitchAudioSequentially(firstUrl, secondUrl, signal) {
+/**
+ * Mix user and agent recordings into a single stereo WAV:
+ *   left channel  = user (customer) voice
+ *   right channel = agent (AI) voice
+ *
+ * Both tracks play simultaneously at their natural timing so the review
+ * sounds like the actual conversation, not all-user-then-all-agent.
+ */
+async function mixAudioTracks(userUrl, agentUrl, signal) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) throw new Error('AudioContext is not supported');
   const audioContext = new AudioCtx();
 
   try {
-    const [first, second] = await Promise.all([
-      loadDecodedBuffer(audioContext, firstUrl, signal),
-      loadDecodedBuffer(audioContext, secondUrl, signal),
+    const [userBuf, agentBuf] = await Promise.all([
+      loadDecodedBuffer(audioContext, userUrl, signal),
+      loadDecodedBuffer(audioContext, agentUrl, signal),
     ]);
-    const merged = concatAudioBuffers(audioContext, first, second);
-    const wavArrayBuffer = encodeWav(merged);
+    const mixed = mixAudioBuffers(audioContext, userBuf, agentBuf);
+    const wavArrayBuffer = encodeWav(mixed);
     return new Blob([wavArrayBuffer], { type: 'audio/wav' });
   } finally {
     await audioContext.close();
@@ -226,19 +234,32 @@ async function loadDecodedBuffer(audioContext, url, signal) {
   return audioContext.decodeAudioData(arrayBuffer.slice(0));
 }
 
-function concatAudioBuffers(audioContext, a, b) {
-  const sampleRate = a.sampleRate;
-  const totalLength = a.length + b.length;
-  const channels = Math.max(a.numberOfChannels, b.numberOfChannels);
-  const out = audioContext.createBuffer(channels, totalLength, sampleRate);
+/**
+ * Stereo mix: user voice → left channel, agent voice → right channel.
+ * Output length = longer of the two tracks; shorter track is zero-padded.
+ * Each input is read from its first channel (handles mono + stereo sources).
+ */
+function mixAudioBuffers(audioContext, userBuf, agentBuf) {
+  const sampleRate = userBuf.sampleRate;
+  const totalLength = Math.max(userBuf.length, agentBuf.length);
+  // Always stereo output so headphones give a clear spatial separation
+  const out = audioContext.createBuffer(2, totalLength, sampleRate);
 
-  for (let channel = 0; channel < channels; channel += 1) {
-    const outData = out.getChannelData(channel);
-    const aData = a.getChannelData(Math.min(channel, a.numberOfChannels - 1));
-    const bData = b.getChannelData(Math.min(channel, b.numberOfChannels - 1));
-    outData.set(aData, 0);
-    outData.set(bData, a.length);
+  const leftOut  = out.getChannelData(0); // user  (customer) → left
+  const rightOut = out.getChannelData(1); // agent (AI)       → right
+
+  // Copy user → left (use ch 0 regardless of source channel count)
+  const userCh = userBuf.getChannelData(0);
+  for (let i = 0; i < userBuf.length; i += 1) {
+    leftOut[i] = userCh[i];
   }
+
+  // Copy agent → right
+  const agentCh = agentBuf.getChannelData(0);
+  for (let i = 0; i < agentBuf.length; i += 1) {
+    rightOut[i] = agentCh[i];
+  }
+
   return out;
 }
 
