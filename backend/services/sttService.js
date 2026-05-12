@@ -1,8 +1,13 @@
+const https = require('https');
 const axios = require('axios');
 const FormData = require('form-data');
 const { logger } = require('../utils/logger');
 
 const SARVAM_STT_URL = 'https://api.sarvam.ai/speech-to-text';
+
+// Reuse TCP connections for STT calls — eliminates TLS handshake on every turn
+// (~50-150 ms), especially valuable on the STT fallback retry path.
+const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 4, keepAliveMsecs: 30000 });
 
 /**
  * Transcribes audio using Sarvam AI STT.
@@ -58,6 +63,7 @@ async function transcribeAudio(
         'api-subscription-key': process.env.SARVAM_API_KEY,
       },
       timeout: 30000,
+      httpsAgent: _httpsAgent,
     });
 
     const transcript = response.data?.transcript || response.data?.text || '';

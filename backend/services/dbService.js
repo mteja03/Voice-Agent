@@ -2,6 +2,33 @@ const { getSupabase } = require('./supabaseClient');
 const { logger } = require('../utils/logger');
 const { throwFromSupabaseError } = require('../utils/supabaseErrors');
 
+// ── In-memory TTL caches ──────────────────────────────────────────────────────
+// Avoids a Supabase round-trip on every turn for data that rarely changes mid-call.
+const CACHE_TTL_MS = 60_000; // 60 seconds
+const _companyInfoCache = new Map(); // companyId → { data, expiresAt }
+const _agentConfigCache = new Map(); // companyId → { data, expiresAt }
+
+function _getCached(cache, key) {
+  const entry = cache.get(key);
+  if (entry && entry.expiresAt > Date.now()) return entry.data;
+  cache.delete(key);
+  return null;
+}
+
+function _setCached(cache, key, data) {
+  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+// ── In-memory session message buffer ─────────────────────────────────────────
+// Accumulates messages in-process so getRecentMessages never hits Supabase after
+// the initial seed (the first DB read per session). Saves ~150-200 ms per turn.
+// Keyed by `${companyId}:${sessionId}`. Evicted when clearSessionDb is called.
+const _sessionMsgBuffer = new Map();
+
+function _sessionKey(companyId, sessionId) {
+  return `${companyId}:${sessionId}`;
+}
+
 async function embedProjectInBackground(projectId, project) {
   const { embedProject } = require('./embeddingService');
   const { getSupabase } = require('./supabaseClient');
@@ -108,11 +135,30 @@ async function saveMessage(companyId, sessionId, role, content, leadId = null) {
     .select('id')
     .single();
   if (error) throw error;
+
+  // Keep in-process buffer in sync so getRecentMessages skips DB on next turn.
+  const key = _sessionKey(companyId, sessionId);
+  if (_sessionMsgBuffer.has(key)) {
+    const buf = _sessionMsgBuffer.get(key);
+    buf.push({ role, content });
+    // Cap at 60 entries (30 full turns) — prevents unbounded growth on very long calls.
+    if (buf.length > 60) buf.splice(0, buf.length - 60);
+  }
+
   return data?.id;
 }
 
 async function getRecentMessages(companyId, sessionId, limit = 10) {
   assertCompanyId(companyId);
+  const key = _sessionKey(companyId, sessionId);
+
+  // Buffer hit — return last `limit` messages without touching DB (~0 ms vs ~150-200 ms).
+  if (_sessionMsgBuffer.has(key)) {
+    const buf = _sessionMsgBuffer.get(key);
+    return buf.slice(-limit);
+  }
+
+  // Buffer miss — seed from DB (happens once per session on the first turn).
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('messages')
@@ -122,7 +168,11 @@ async function getRecentMessages(companyId, sessionId, limit = 10) {
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data || []).reverse().map((m) => ({ role: m.role, content: m.content }));
+  const messages = (data || []).reverse().map((m) => ({ role: m.role, content: m.content }));
+
+  // Seed the buffer so subsequent turns skip the DB entirely.
+  _sessionMsgBuffer.set(key, [...messages]);
+  return messages;
 }
 
 async function getSessionMessages(companyId, sessionId) {
@@ -140,6 +190,8 @@ async function getSessionMessages(companyId, sessionId) {
 
 async function clearSessionDb(companyId, sessionId) {
   assertCompanyId(companyId);
+  // Evict in-process message buffer for this session.
+  _sessionMsgBuffer.delete(_sessionKey(companyId, sessionId));
   const supabase = getSupabase();
   await Promise.all([
     supabase.from('messages').delete().eq('company_id', companyId).eq('session_id', sessionId),
@@ -476,6 +528,9 @@ async function deleteProject(companyId, id) {
 
 async function getCompanyInfo(companyId) {
   assertCompanyId(companyId);
+  // Check in-memory cache first (saves ~100-200 ms/turn on cache hits).
+  const cached = _getCached(_companyInfoCache, companyId);
+  if (cached) return cached;
   const supabase = getSupabase();
   await ensureCompany(companyId);
   const { data, error } = await supabase
@@ -484,11 +539,15 @@ async function getCompanyInfo(companyId) {
     .eq('id', companyId)
     .single();
   if (error) throw error;
-  return { ...(data.profile || {}), name: data.name };
+  const result = { ...(data.profile || {}), name: data.name };
+  _setCached(_companyInfoCache, companyId, result);
+  return result;
 }
 
 async function updateCompanyInfo(companyId, payload) {
   assertCompanyId(companyId);
+  // Invalidate cache so the next read reflects the new data.
+  _companyInfoCache.delete(companyId);
   const supabase = getSupabase();
   await ensureCompany(companyId, payload?.name || 'Voice Agent Company');
   const update = {
@@ -533,8 +592,13 @@ async function getAgentConfigRow(companyId) {
 }
 
 async function getAgentConfig(companyId) {
+  // Check in-memory cache first (saves ~100-200 ms/turn on cache hits).
+  const cached = _getCached(_agentConfigCache, companyId);
+  if (cached) return cached;
   const row = await getAgentConfigRow(companyId);
-  return normalizeAgentConfig(row);
+  const result = normalizeAgentConfig(row);
+  if (result) _setCached(_agentConfigCache, companyId, result);
+  return result;
 }
 
 function normalizeAgentConfig(row) {
@@ -559,6 +623,8 @@ function normalizeAgentConfig(row) {
 
 async function upsertAgentConfig(companyId, payload) {
   assertCompanyId(companyId);
+  // Invalidate cache so the next read reflects the saved settings.
+  _agentConfigCache.delete(companyId);
   const supabase = getSupabase();
   const row = {
     company_id: companyId,
@@ -792,11 +858,20 @@ async function deleteQuestionnaire(companyId, questionnaireId) {
   return Array.isArray(data) && data.length > 0;
 }
 
+/**
+ * Evict the in-process message buffer for a specific session.
+ * Call this at end_call and disconnect so stale buffers don't linger.
+ */
+function evictSessionBuffer(companyId, sessionId) {
+  _sessionMsgBuffer.delete(_sessionKey(companyId, sessionId));
+}
+
 module.exports = {
   saveMessage,
   getRecentMessages,
   getSessionMessages,
   clearSessionDb,
+  evictSessionBuffer,
   logCall,
   updateCallRecordingPaths,
   listRecentCalls,

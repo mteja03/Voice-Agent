@@ -1,7 +1,13 @@
+const https = require('https');
 const axios = require('axios');
 const { logger } = require('../utils/logger');
 
 const SARVAM_TTS_STREAM_URL = 'https://api.sarvam.ai/text-to-speech/stream';
+
+// Reuse TCP connections across TTS calls so every chunk doesn't pay the
+// TLS handshake cost (~50-150 ms).  maxSockets=10 covers the parallel TTS
+// pipeline (typically 2-4 concurrent calls) with headroom.
+const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10, keepAliveMsecs: 30000 });
 
 /**
  * Converts text to speech using Sarvam AI HTTP streaming TTS endpoint.
@@ -32,6 +38,7 @@ async function synthesizeSpeech(text, speaker = 'shubh', model = 'bulbul:v3', la
       },
       timeout: 30000,
       responseType: 'arraybuffer',
+      httpsAgent: _httpsAgent,
     });
 
     if (!response.data || response.data.byteLength === 0) {

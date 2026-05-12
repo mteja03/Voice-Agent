@@ -50,7 +50,7 @@ const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./services/te
 const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech } = require('./services/ttsService');
-const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths } = require('./services/db');
+const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths, getAgentConfig, evictSessionBuffer } = require('./services/db');
 const callRecording = require('./services/callRecording');
 const { safeClientMessage } = require('./utils/sanitize');
 const { logger } = require('./utils/logger');
@@ -115,7 +115,14 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  sendSuccess(res, { status: 'ok', service: 'Voice Agent' });
+  sendSuccess(res, {
+    status: 'ok',
+    service: 'Voice Agent',
+    activeSockets: activeSessions.size,
+    // Live p50/p95/p99 turn latency from the in-memory ring buffer.
+    // null when no turns have been completed since last restart.
+    latencyMs: getLatencyStats(),
+  });
 });
 
 app.get(
@@ -215,12 +222,40 @@ const socketNoiseCounts = new Map(); // socketId → consecutive no-speech count
 const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|goodbye|bye|have a great day|हम फिर बात करेंगे)/i;
 const STT_TIMEOUT_MS = 15000;
 const TTS_TIMEOUT_MS = 20000;
+// Audio payloads below this threshold are almost certainly silence or mic-open
+// noise — skip the Sarvam round-trip entirely and emit no_speech immediately.
+const STT_MIN_AUDIO_BYTES = 1500;
 // After this many consecutive empty/low-signal turns, emit a gentle "can you hear me?" nudge.
 const STT_NOISE_NUDGE_THRESHOLD = 2;
 const STT_NOISE_NUDGE_TEXT = 'మీరు వినపడుతున్నారా? మీరు మాట్లాడవచ్చు.';
 
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+// ─── Turn-latency ring buffer ─────────────────────────────────────────────────
+// Keeps the last RING_SIZE total-turn latencies in memory so the /health endpoint
+// can report live p50/p95/p99 without any external metrics store.
+const LATENCY_RING_SIZE = 200;
+const _latencyRing = [];
+
+function recordTurnLatency(totalMs) {
+  _latencyRing.push(Math.round(totalMs));
+  if (_latencyRing.length > LATENCY_RING_SIZE) _latencyRing.shift();
+}
+
+function getLatencyStats() {
+  if (!_latencyRing.length) return null;
+  const sorted = [..._latencyRing].sort((a, b) => a - b);
+  const n = sorted.length;
+  return {
+    n,
+    avg: Math.round(sorted.reduce((s, v) => s + v, 0) / n),
+    p50: sorted[Math.floor(n * 0.50)] ?? null,
+    p75: sorted[Math.floor(n * 0.75)] ?? null,
+    p95: sorted[Math.floor(n * 0.95)] ?? null,
+    p99: sorted[Math.floor(n * 0.99)] ?? null,
+  };
 }
 
 function emitTtsAudioChunk(socket, companyId, sessionId, payload) {
@@ -525,8 +560,10 @@ io.on('connection', (socket) => {
       socket.emit('response_complete', { aiText: cleanedAssistantMessage, shouldEndCall, latency });
 
       if (timingMeta) {
+        const totalMs = doneAt - timingMeta.requestStartMs;
+        recordTurnLatency(totalMs);
         console.log(
-          `[Latency] session=${sessionId} stt_ms=${timingMeta.sttMs ?? 'na'} llm_first_token_ms=${timingMeta.llmFirstTokenMs ?? 'na'} tts_chunks=${ttsChunks} tts_total_ms=${ttsTotalMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${(doneAt - timingMeta.requestStartMs).toFixed(1)}`
+          `[Latency] session=${sessionId} stt_ms=${timingMeta.sttMs ?? 'na'} llm_first_token_ms=${timingMeta.llmFirstTokenMs ?? 'na'} tts_chunks=${ttsChunks} tts_total_ms=${ttsTotalMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${totalMs.toFixed(1)}`
         );
       }
     }
@@ -625,6 +662,15 @@ io.on('connection', (socket) => {
     try {
       logger.info('process_audio', { companyId, sessionId, bytes: audioBuffer?.size || audioBuffer?.length || 0 });
       const requestStartMs = nowMs();
+
+      // ── Prefetch DB reads that don't depend on the transcript ──────────────
+      // Fire these the moment audio arrives so they run in parallel with the
+      // STT network call (~1600 ms). On cache hits (turn 2+) they resolve
+      // instantly from memory. On the first turn they save ~200-400 ms because
+      // the Supabase round-trips complete while STT is still in flight.
+      const companyInfoPromise = getCompanyInfo(companyId).catch(() => null);
+      const agentConfigPromise = getAgentConfig(companyId).catch(() => null);
+
       const sttStartMs = nowMs();
 
       const normalizedUserAudio = callRecording.normalizeSocketAudioBuffer(audioBuffer);
@@ -632,6 +678,18 @@ io.on('connection', (socket) => {
         callRecording.appendUser(companyId, sessionId, normalizedUserAudio, audioMimeType);
       }
       const sttInput = normalizedUserAudio?.length ? normalizedUserAudio : audioBuffer;
+
+      // ── Fast silence gate ──────────────────────────────────────────────────
+      // Payloads below 1500 bytes contain less than ~90 ms of audio at 16-kHz
+      // mono PCM — too short to carry a real utterance.  Skip the Sarvam API
+      // call (~1600 ms round-trip) and immediately emit no_speech.
+      if (sttInput?.length < STT_MIN_AUDIO_BYTES) {
+        logger.info('stt_skipped_tiny_audio', { companyId, sessionId, bytes: sttInput?.length });
+        const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
+        socketNoiseCounts.set(socket.id, noiseCount);
+        socket.emit('no_speech');
+        return;
+      }
 
       // ── Feature 6: STT with language fallback ──────────────────────────────
       // Try te-IN first. If transcript is empty or looks like garbled output,
@@ -744,8 +802,10 @@ io.on('connection', (socket) => {
       socket.emit('transcript', { transcript });
 
       // ── LLM Streaming ──────────────────────────────────────────────────────
+      // Pass the pre-started DB promises — they may already be resolved now
+      // that STT has finished, meaning zero additional wait for those reads.
       const llmStartMs = nowMs();
-      const stream = await generateResponseStream(transcript, sessionId, companyId, lead, languageMode, agentName);
+      const stream = await generateResponseStream(transcript, sessionId, companyId, lead, languageMode, agentName, { companyInfoPromise, agentConfigPromise });
       let firstTokenSeen = false;
       const timingMeta = { requestStartMs, sttMs, llmFirstTokenMs: null };
       const instrumentedStream = (async function* wrapStream() {
@@ -822,8 +882,10 @@ io.on('connection', (socket) => {
         }
       }
       sessionStartTimes.delete(sessionId);
+      // Evict the in-process message buffer — call is done, no more turns expected.
+      evictSessionBuffer(companyId, sessionId);
       logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
-      
+
       socket.emit('call_summary', { summary });
     } catch (err) {
       console.error('[Socket] End Call Summary Error:', err.message);
@@ -840,8 +902,15 @@ io.on('connection', (socket) => {
     activeSessions.delete(socket.id);
     socketNoiseCounts.delete(socket.id);
     const recSid = socket.data?.recordingSessionId;
-    if (recSid && companyId && !socket.data?.endingCall) {
-      callRecording.discard(companyId, recSid);
+    if (recSid && companyId) {
+      // Evict stale session data for abandoned calls (user closed tab without end_call).
+      if (!socket.data?.endingCall) {
+        callRecording.discard(companyId, recSid);
+        evictSessionBuffer(companyId, recSid);
+      }
+      // Always free sessionStartTimes — it's keyed by sessionId and leaks
+      // if the client disconnects without calling end_call.
+      sessionStartTimes.delete(recSid);
     }
     logger.info('socket_disconnected', {
       socketId: socket.id,
