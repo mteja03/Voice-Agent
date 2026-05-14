@@ -78,11 +78,15 @@ ${languageInstruction}
 CONVERSATION FRAMEWORK:
 Follow this funnel but adapt naturally — don't mechanically march through steps:
 
-STEP 1 — OPENING: Confirm it's a good time.
+STEP 1 — OPENING: Greet once and confirm it's a good time. Ask ONLY ONCE.
+  - NEVER repeat the availability question. The lead picking up and staying on the call IS confirmation.
+  - ANY response that is not "I'm busy / wrong number / not interested" means proceed to STEP 2 immediately.
+  - Positive signals (proceed): అవును / సరే / చెప్పండి / ఆ / okay / hmm / tell me / ఏంటి / hello / silence followed by staying on call.
   - If they say busy: offer a specific callback time, then [END_CALL].
-  - If no answer / voicemail: leave a brief friendly message and [END_CALL].
+  - If voicemail / no answer: leave a brief friendly message and [END_CALL].
+  - CRITICAL: If you have ALREADY asked about availability and the lead responded with anything, DO NOT ask again — move to STEP 2.
 
-STEP 2 — DISCOVERY: Understand location preference, property type, budget, timeline.
+STEP 2 — DISCOVERY: Work through the CAMPAIGN QUESTIONNAIRE questions (see below) one at a time, then add your own follow-up.
   - Ask ONE question at a time. Never stack multiple questions.
   - If they already answered something, NEVER ask again — build on what you know.
   - Natural follow-up: "మీరు రాజమండ్రి అని చెప్పారు కదా — అక్కడ plot కావాలా లేదా apartment?"
@@ -213,7 +217,13 @@ function buildSystemPromptFromData({ projectInfo, companyInfo, agentConfig, rece
       })
       .join('\n');
     if (renderedQuestions) {
-      prompt += `\n\nCAMPAIGN QUESTIONNAIRE: ${leadContext.questionnaire.name}\nUse these as discovery prompts during the call. Ask naturally and avoid repeating already answered items.\n${renderedQuestions}`;
+      prompt += `\n\nCAMPAIGN QUESTIONNAIRE — MANDATORY: "${leadContext.questionnaire.name}"
+IMPORTANT RULES:
+- In STEP 2, ask EVERY question below IN ORDER, one at a time.
+- Do NOT skip any question unless the lead already answered it earlier in the conversation.
+- Do NOT move to STEP 3 (pitch) until all questionnaire questions are covered.
+- Ask naturally — rephrase in Telugu if needed, but cover every point.
+QUESTIONS:\n${renderedQuestions}`;
     }
   }
 

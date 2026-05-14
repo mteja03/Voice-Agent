@@ -190,7 +190,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setProcessingStage('generating'); // STT done → now generating LLM reply
     };
 
-    const handleTtsAudioChunk = ({ audioBuffer, text }) => {
+    const handleTtsAudioChunk = async ({ audioBuffer, text }) => {
       assistantBusyRef.current = true;
       introPendingRef.current = false;
       setProcessingStage(null);
@@ -205,29 +205,10 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         }
         return newTurns;
       });
-
       if (audioBuffer) {
-        // Normalise the various binary formats Socket.IO may deliver
-        const raw = normalizeToArrayBuffer(audioBuffer);
-        const ac = audioContextRef.current;
-        if (raw && ac && ac.state !== 'closed') {
-          // Decode immediately on arrival — no decode delay on playback start.
-          ac.decodeAudioData(raw.slice(0))
-            .then(decoded => {
-              decodedQueueRef.current.push(decoded);
-              playNextAudioRef.current?.();
-            })
-            .catch(() => {
-              // Fallback: legacy raw-buffer path (decodes at playback time)
-              audioQueueRef.current.push(audioBuffer);
-              playNextAudioRef.current?.();
-            });
-        } else {
-          // AudioContext not ready yet — queue raw for decode-at-play fallback
-          audioQueueRef.current.push(audioBuffer);
-          playNextAudioRef.current?.();
-        }
+        audioQueueRef.current.push(audioBuffer);
       }
+      playNextAudioRef.current?.();
     };
 
     const handleResponseComplete = ({ shouldEndCall, latency }) => {
