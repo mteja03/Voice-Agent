@@ -49,7 +49,7 @@ const { getCompanyInfo } = require('./services/knowledgeBase');
 const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./services/templatePlaceholders');
 const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
-const { synthesizeSpeech } = require('./services/ttsService');
+const { synthesizeSpeech, prewarmTtsCache, getTtsCacheStats } = require('./services/ttsService');
 const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths, getAgentConfig, evictSessionBuffer } = require('./services/db');
 const callRecording = require('./services/callRecording');
 const { safeClientMessage } = require('./utils/sanitize');
@@ -122,6 +122,8 @@ app.get('/health', (req, res) => {
     // Live p50/p95/p99 turn latency from the in-memory ring buffer.
     // null when no turns have been completed since last restart.
     latencyMs: getLatencyStats(),
+    // LRU TTS audio cache stats — repeated phrases served in ~0 ms vs 3-4 s Sarvam call.
+    ttsCache: getTtsCacheStats(),
   });
 });
 
@@ -599,6 +601,15 @@ io.on('connection', (socket) => {
 
     try {
       logger.info('call_started', { companyId, sessionId, leadPhone: lead?.phone || null });
+
+      // Fire-and-forget: pre-generate audio for common phrases so the first
+      // acknowledgement / closing hits the cache instead of Sarvam (~3-4 s saved).
+      prewarmTtsCache(
+        ttsVoice || 'shubh',
+        resolveLanguageCode(languageMode || 'telugu'),
+        ttsModel  || 'bulbul:v3',
+      ).catch(() => {});
+
       const requestStartMs = nowMs();
       const fullAssistantMessage = await renderIntroMessage(companyId, lead, introTemplate, agentName);
 
