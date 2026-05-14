@@ -104,7 +104,7 @@ async function _callSarvam(text, speaker, model, languageCode) {
     target_language_code: languageCode || 'te-IN',
     speaker,
     model,
-    pace: 1.0,
+    pace: 0.85,
     speech_sample_rate: 16000,
     enable_preprocessing: false,
     output_audio_codec: 'mp3',

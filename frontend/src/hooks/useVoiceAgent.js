@@ -46,7 +46,9 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
 
   const turnIdRef = useRef(0);
   const socketRef = useRef(null);
-  const audioQueueRef = useRef([]);
+  const audioQueueRef = useRef([]);        // raw fallback queue (legacy path)
+  const decodedQueueRef = useRef([]);      // pre-decoded AudioBuffer[] — main playback queue
+  const scheduledEndTimeRef = useRef(0);  // AudioContext timestamp when the last chunk ends
   const isPlayingRef = useRef(false);
   const audioContextRef = useRef(null);
   const sourceNodeRef = useRef(null);
@@ -90,10 +92,12 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
 
   const stopAudioPlayback = useCallback(() => {
     if (sourceNodeRef.current) {
-      sourceNodeRef.current.stop();
+      try { sourceNodeRef.current.stop(); } catch {}
       sourceNodeRef.current = null;
     }
     audioQueueRef.current = [];
+    decodedQueueRef.current = [];
+    scheduledEndTimeRef.current = 0;
     isPlayingRef.current = false;
     setStatus('idle');
   }, []);
@@ -186,7 +190,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setProcessingStage('generating'); // STT done → now generating LLM reply
     };
 
-    const handleTtsAudioChunk = async ({ audioBuffer, text }) => {
+    const handleTtsAudioChunk = ({ audioBuffer, text }) => {
       assistantBusyRef.current = true;
       introPendingRef.current = false;
       setProcessingStage(null);
@@ -201,10 +205,29 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         }
         return newTurns;
       });
+
       if (audioBuffer) {
-        audioQueueRef.current.push(audioBuffer);
+        // Normalise the various binary formats Socket.IO may deliver
+        const raw = normalizeToArrayBuffer(audioBuffer);
+        const ac = audioContextRef.current;
+        if (raw && ac && ac.state !== 'closed') {
+          // Decode immediately on arrival — no decode delay on playback start.
+          ac.decodeAudioData(raw.slice(0))
+            .then(decoded => {
+              decodedQueueRef.current.push(decoded);
+              playNextAudioRef.current?.();
+            })
+            .catch(() => {
+              // Fallback: legacy raw-buffer path (decodes at playback time)
+              audioQueueRef.current.push(audioBuffer);
+              playNextAudioRef.current?.();
+            });
+        } else {
+          // AudioContext not ready yet — queue raw for decode-at-play fallback
+          audioQueueRef.current.push(audioBuffer);
+          playNextAudioRef.current?.();
+        }
       }
-      playNextAudioRef.current?.();
     };
 
     const handleResponseComplete = ({ shouldEndCall, latency }) => {
@@ -304,73 +327,85 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   }, [stopAudioPlayback]);
 
   // ── Audio Playback (Web Audio API, gapless queue) ─────────────────────────
+  //
+  // Two-tier queue:
+  //   decodedQueueRef  — AudioBuffer[] already decoded (fast path, no gap)
+  //   audioQueueRef    — raw bytes fallback (decoded here, tiny gap)
+  //
+  // Gapless: each chunk is scheduled at scheduledEndTimeRef so the Web Audio
+  // engine starts it at the exact moment the previous one ends.
   const playNextAudio = async () => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    const hasDecoded = decodedQueueRef.current.length > 0;
+    const hasRaw     = audioQueueRef.current.length > 0;
+    if (isPlayingRef.current || (!hasDecoded && !hasRaw)) return;
     isPlayingRef.current = true;
     setStatus('speaking');
 
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
-    // iOS Safari requires explicit resume after creation
     if (audioContextRef.current.state === 'suspended') {
       await audioContextRef.current.resume().catch(() => {});
     }
 
-    const nextAudio = audioQueueRef.current.shift();
-
+    let audioBuffer;
     try {
-      let encodedBuffer;
-      if (nextAudio instanceof ArrayBuffer) {
-        encodedBuffer = nextAudio;
-      } else if (ArrayBuffer.isView(nextAudio)) {
-        encodedBuffer = nextAudio.buffer.slice(nextAudio.byteOffset, nextAudio.byteOffset + nextAudio.byteLength);
-      } else if (nextAudio && nextAudio.type === 'Buffer' && Array.isArray(nextAudio.data)) {
-        encodedBuffer = Uint8Array.from(nextAudio.data).buffer;
+      if (hasDecoded) {
+        // Fast path — already decoded, no async work needed
+        audioBuffer = decodedQueueRef.current.shift();
       } else {
-        throw new Error('Unsupported audio chunk format');
+        // Fallback: decode raw bytes (original path, adds ~15 ms)
+        const raw = normalizeToArrayBuffer(audioQueueRef.current.shift());
+        if (!raw) throw new Error('Unsupported audio chunk format');
+        audioBuffer = await audioContextRef.current.decodeAudioData(raw.slice(0));
       }
-
-      const audioBuffer = await audioContextRef.current.decodeAudioData(encodedBuffer.slice(0));
-      const source = audioContextRef.current.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContextRef.current.destination);
-      sourceNodeRef.current = source;
-
-      source.onended = () => {
-        isPlayingRef.current = false;
-        sourceNodeRef.current = null;
-        if (audioQueueRef.current.length > 0) {
-          playNextAudioRef.current?.();
-        } else {
-          if (!pendingTurnRef.current) assistantBusyRef.current = false;
-          setStatus('idle');
-          if (autoListenEnabledRef.current) {
-            // VAD mode: resume listening; PTT mode: nothing to do (user holds button)
-            if (VAD_LIKELY_SUPPORTED && vadRef.current && !vadRef.current.errored) {
-              vadRef.current?.start();
-            }
-          }
-          if (pendingAutoEndRef.current) {
-            pendingAutoEndRef.current = false;
-            if (socketRef.current?.connected) {
-              setTimeout(() => {
-                socketRef.current?.emit('end_call', {
-                  sessionId,
-                  lead: latestLeadRef.current || null,
-                });
-              }, 700);
-            }
-          }
-        }
-      };
-
-      source.start();
     } catch (err) {
-      console.error('Error playing audio chunk', err);
+      console.error('Error decoding audio chunk', err);
       isPlayingRef.current = false;
       setStatus('idle');
+      return;
     }
+
+    const ac  = audioContextRef.current;
+    const source = ac.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ac.destination);
+    sourceNodeRef.current = source;
+
+    // Schedule gaplessly: start at the exact moment the previous chunk ended.
+    // The 5 ms offset prevents rounding errors when currentTime == scheduledEnd.
+    const startAt = Math.max(ac.currentTime + 0.005, scheduledEndTimeRef.current);
+    source.start(startAt);
+    scheduledEndTimeRef.current = startAt + audioBuffer.duration;
+
+    source.onended = () => {
+      isPlayingRef.current = false;
+      sourceNodeRef.current = null;
+      const hasMore = decodedQueueRef.current.length > 0 || audioQueueRef.current.length > 0;
+      if (hasMore) {
+        playNextAudioRef.current?.();
+      } else {
+        scheduledEndTimeRef.current = 0;
+        if (!pendingTurnRef.current) assistantBusyRef.current = false;
+        setStatus('idle');
+        if (autoListenEnabledRef.current) {
+          if (VAD_LIKELY_SUPPORTED && vadRef.current && !vadRef.current.errored) {
+            vadRef.current?.start();
+          }
+        }
+        if (pendingAutoEndRef.current) {
+          pendingAutoEndRef.current = false;
+          if (socketRef.current?.connected) {
+            setTimeout(() => {
+              socketRef.current?.emit('end_call', {
+                sessionId,
+                lead: latestLeadRef.current || null,
+              });
+            }, 700);
+          }
+        }
+      }
+    };
   };
   playNextAudioRef.current = playNextAudio;
 
@@ -391,7 +426,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setStatus('listening');
     },
     onSpeechEnd: (audioData) => {
-      if (assistantBusyRef.current || isPlayingRef.current || audioQueueRef.current.length > 0) return;
+      if (assistantBusyRef.current || isPlayingRef.current || audioQueueRef.current.length > 0 || decodedQueueRef.current.length > 0) return;
       const speechDurationMs = (audioData.length / 16000) * 1000;
       if (speechDurationMs < 550) { setStatus('idle'); return; }
       if (pendingTurnRef.current) return;
@@ -634,6 +669,23 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     startPushToTalk,
     stopPushToTalk,
   };
+}
+
+// ── Audio buffer normaliser ───────────────────────────────────────────────────
+// Socket.IO delivers binary data in several formats depending on the transport
+// and client version. Normalise all of them to a plain ArrayBuffer for
+// decodeAudioData().
+function normalizeToArrayBuffer(raw) {
+  if (!raw) return null;
+  if (raw instanceof ArrayBuffer) return raw;
+  if (ArrayBuffer.isView(raw)) {
+    return raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+  }
+  // Socket.IO JSON-serialised Buffer: { type: 'Buffer', data: [0,1,2,...] }
+  if (raw.type === 'Buffer' && Array.isArray(raw.data)) {
+    return Uint8Array.from(raw.data).buffer;
+  }
+  return null;
 }
 
 // ── WAV encoder (for VAD path) ────────────────────────────────────────────────
