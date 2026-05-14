@@ -116,21 +116,27 @@ function loadActiveLeadId() {
   }
 }
 
-/** @returns {{ id: string, name: string, createdAt: string, leads: object[] }[]} */
+/** @returns {{ id: string, name: string, description: string, status: string, createdAt: string, leads: object[] }[]} */
+function normalizeCampaign(c) {
+  return {
+    id: String(c.id || uuidv4()),
+    name: typeof c.name === 'string' && c.name.trim() ? c.name.trim() : 'Campaign',
+    description: typeof c.description === 'string' ? c.description : '',
+    status: ['draft', 'active', 'paused', 'completed'].includes(c.status) ? c.status : 'draft',
+    createdAt: typeof c.createdAt === 'string' ? c.createdAt : new Date().toISOString(),
+    leads: normalizeLeadIds(Array.isArray(c.leads) ? c.leads : []),
+    questionnaireId: typeof c.questionnaireId === 'string' ? c.questionnaireId : null,
+    questionnaireName: typeof c.questionnaireName === 'string' ? c.questionnaireName : '',
+  };
+}
+
 function loadCampaignsBootstrap() {
   try {
     const raw = localStorage.getItem(LS_KEYS.campaigns);
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr) && arr.length > 0) {
-        return arr.map((c) => ({
-          id: String(c.id || uuidv4()),
-          name: typeof c.name === 'string' && c.name.trim() ? c.name.trim() : 'Campaign',
-          createdAt: typeof c.createdAt === 'string' ? c.createdAt : new Date().toISOString(),
-          leads: normalizeLeadIds(Array.isArray(c.leads) ? c.leads : []),
-          questionnaireId: typeof c.questionnaireId === 'string' ? c.questionnaireId : null,
-          questionnaireName: typeof c.questionnaireName === 'string' ? c.questionnaireName : '',
-        }));
+        return arr.map(normalizeCampaign);
       }
     }
     const flat =
@@ -138,39 +144,19 @@ function loadCampaignsBootstrap() {
     if (flat) {
       const leads = normalizeLeadIds(JSON.parse(flat));
       const id = uuidv4();
-      const migrated = [
-        {
-          id,
-          name: 'Imported list',
-          createdAt: new Date().toISOString(),
-          leads,
-          questionnaireId: null,
-          questionnaireName: '',
-        },
-      ];
+      const migrated = [normalizeCampaign({ id, name: 'Imported list', leads })];
       try {
         localStorage.setItem(LS_KEYS.campaigns, JSON.stringify(migrated));
         localStorage.removeItem(LS_KEYS.leads);
         localStorage.removeItem(LEGACY_LS_KEYS.leads);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
       return migrated;
     }
   } catch {
     // fall through
   }
   const id = uuidv4();
-  return [
-    {
-      id,
-      name: 'My first campaign',
-      createdAt: new Date().toISOString(),
-      leads: [],
-      questionnaireId: null,
-      questionnaireName: '',
-    },
-  ];
+  return [normalizeCampaign({ id, name: 'My first campaign', leads: [] })];
 }
 
 function loadInitialActiveCampaignId(campaigns) {
@@ -443,20 +429,26 @@ export default function App() {
     [campaigns, activeCampaignId, clearSession]
   );
 
-  const handleCreateCampaign = useCallback((name) => {
+  const handleCreateCampaign = useCallback((payload) => {
     const id = uuidv4();
-    const trimmed = (name || '').trim();
-    setCampaigns((prev) => [
-      ...prev,
-      {
-        id,
-        name: trimmed || `Campaign ${prev.length + 1}`,
-        createdAt: new Date().toISOString(),
-        leads: [],
-        questionnaireId: null,
-        questionnaireName: '',
-      },
-    ]);
+    // Accept either a plain name string (legacy) or an object with name/description/questionnaire
+    const name = typeof payload === 'string'
+      ? payload
+      : (typeof payload?.name === 'string' ? payload.name : '');
+    const trimmed = name.trim();
+    setCampaigns((prev) =>
+      [
+        ...prev,
+        normalizeCampaign({
+          id,
+          name: trimmed || `Campaign ${prev.length + 1}`,
+          description: typeof payload === 'object' ? (payload?.description || '') : '',
+          questionnaireId: typeof payload === 'object' ? (payload?.questionnaireId || null) : null,
+          questionnaireName: typeof payload === 'object' ? (payload?.questionnaireName || '') : '',
+          leads: [],
+        }),
+      ]
+    );
     setActiveCampaignId(id);
     clearSession();
     setActiveLeadId(null);
@@ -466,6 +458,12 @@ export default function App() {
       // ignore
     }
   }, [clearSession]);
+
+  const handleUpdateCampaign = useCallback((campaignId, patch) => {
+    setCampaigns((prev) =>
+      prev.map((c) => (c.id === campaignId ? { ...c, ...patch } : c))
+    );
+  }, []);
 
   const handleRenameCampaign = useCallback((campaignId, nextName) => {
     const t = (nextName || '').trim();
@@ -490,15 +488,6 @@ export default function App() {
   const handleDeleteCampaign = useCallback(
     (campaignId) => {
       if (campaigns.length <= 1) return;
-      const victim = campaigns.find((c) => c.id === campaignId);
-      if (!victim) return;
-      if (
-        !window.confirm(
-          `Delete campaign "${victim.name}" and all of its leads? This cannot be undone.`
-        )
-      ) {
-        return;
-      }
       const next = campaigns.filter((c) => c.id !== campaignId);
       setCampaigns(next);
       if (activeCampaignId === campaignId) {
@@ -728,6 +717,7 @@ export default function App() {
                 onRenameCampaign={handleRenameCampaign}
                 onDeleteCampaign={handleDeleteCampaign}
                 onSetCampaignQuestionnaire={handleSetCampaignQuestionnaire}
+                onUpdateCampaign={handleUpdateCampaign}
                 leads={leads}
                 activeLead={activeLead}
                 onLeadsChange={handleLeadsChange}
