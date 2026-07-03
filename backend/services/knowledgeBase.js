@@ -104,14 +104,12 @@ async function getRelevantProjectInfo(companyId, transcript) {
 
   const lower = transcript.toLowerCase().trim();
 
-  // ── Short-circuit: skip RAG entirely for very short acknowledgements ─────────
-  // Phrases like "అవును", "okay", "hmm" never match project data anyway.
-  const wordCount = lower.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 6 || lower.length < 20) return null;
-
   // ── Fast keyword gate: skip all RAG when no property terms detected ─────────
   // This avoids the OpenAI Ada-002 embedding call (~300-500 ms) on every
   // conversational turn like greetings, confirmations, and off-topic replies.
+  // Acknowledgements like "అవును", "okay", "hmm" carry no property keyword and
+  // exit here cheaply. A SHORT query WITH a keyword (e.g. "plots in Kakinada?")
+  // must still reach RAG, so we deliberately do NOT gate on word count.
   const hasKeyword = TRIGGER_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
   if (!hasKeyword) return '';
 

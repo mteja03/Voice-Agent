@@ -257,6 +257,23 @@ async function generateResponseStream(transcript, sessionId, companyId, leadCont
   return createResponseStream(transcript, sessionId, companyId, leadContext, languageMode, agentName, hints);
 }
 
+/**
+ * Non-streaming variant used by the REST route (POST /api/conversation).
+ * Consumes the same streaming pipeline and persists the assistant message,
+ * returning the full text. Kept as a thin wrapper so there is no duplicated
+ * prompt-building logic.
+ */
+async function generateResponse(transcript, sessionId, companyId, leadContext = null, languageMode = 'telugu', agentName = 'Voice Agent') {
+  const stream = await createResponseStream(transcript, sessionId, companyId, leadContext, languageMode, agentName);
+  let full = '';
+  for await (const chunk of stream) {
+    full += chunk.choices[0]?.delta?.content || '';
+  }
+  const text = full.trim();
+  if (text) await saveMessage(companyId, sessionId, 'assistant', text);
+  return text || 'క్షమించండి... ఒక సమస్య వచ్చింది. మళ్లీ ప్రయత్నించవచ్చా?';
+}
+
 async function generateCallSummary(companyId, sessionId, leadContext) {
   const openai = getOpenAI();
   const messages = await getSessionMessages(companyId, sessionId);
@@ -351,6 +368,7 @@ async function clearSession(companyId, sessionId) {
 }
 
 module.exports = {
+  generateResponse,
   generateResponseStream,
   generateCallSummary,
   clearSession,

@@ -231,7 +231,7 @@ const sessionStartTimes = new Map(); // sessionId → startTime in ms
 const socketNoiseCounts = new Map(); // socketId → consecutive no-speech count
 const socketLastProcessAt = new Map(); // socketId → timestamp of last process_audio
 // Keep this strict to avoid accidental auto-hangups during normal polite replies.
-const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|మంచి రోజు గడపండి|ధన్యవాదాలు మాట్లాడినందుకు|goodbye|bye\b|have a great day|talk later|call you later|not interested|हम फिर बात करेंगे|अलविदा|धन्यवाद|फिर बात करते)/i;
+const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|మంచి రోజు గడపండి|ధన్యవాదాలు మాట్లాడినందుకు|goodbye|\bbye\b|have a great day|talk later|call you later|not interested|हम फिर बात करेंगे|अलविदा|धन्यवाद|फिर बात करते)/i;
 const STT_TIMEOUT_MS = 15000;
 const TTS_TIMEOUT_MS = 20000;
 // Audio payloads below this threshold are almost certainly silence or mic-open
@@ -985,13 +985,17 @@ io.on('connection', (socket) => {
           }
         }
         logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
-        socket.emit('call_summary', { summary });
+        // Client may have disconnected during summary generation — the summary
+        // is already persisted via logCall above, so a missed emit is harmless.
+        if (socket.connected) socket.emit('call_summary', { summary });
       } catch (err) {
         logger.error('end_call_summary_error', { err: err.message });
-        // Emit a fallback summary so the client doesn't hang
-        socket.emit('call_summary', {
-          summary: { outcome: 'unknown', summaryNote: 'Summary generation failed.' },
-        });
+        // Emit a fallback summary so the client doesn't hang (only if still connected)
+        if (socket.connected) {
+          socket.emit('call_summary', {
+            summary: { outcome: 'unknown', summaryNote: 'Summary generation failed.' },
+          });
+        }
       } finally {
         socket.data.endingCall = false;
       }

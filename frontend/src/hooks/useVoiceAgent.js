@@ -50,6 +50,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const decodedQueueRef = useRef([]);      // pre-decoded AudioBuffer[] — main playback queue
   const scheduledEndTimeRef = useRef(0);  // AudioContext timestamp when the last chunk ends
   const isPlayingRef = useRef(false);
+  const playbackGenRef = useRef(0);       // bumped on stop — invalidates in-flight look-ahead decodes
   const audioContextRef = useRef(null);
   const sourceNodeRef = useRef(null);
   const hasSentIntroRef = useRef(false);
@@ -99,6 +100,9 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     decodedQueueRef.current = [];
     scheduledEndTimeRef.current = 0;
     isPlayingRef.current = false;
+    // Invalidate any look-ahead decode still in flight so its buffer is not
+    // pushed into decodedQueueRef after we've cleared it (stale-chunk guard).
+    playbackGenRef.current += 1;
     setStatus('idle');
   }, []);
 
@@ -376,12 +380,19 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     if (audioQueueRef.current.length > 0 && decodedQueueRef.current.length === 0) {
       const nextRaw = audioQueueRef.current.shift(); // consume raw entry immediately
       const nextAb = normalizeToArrayBuffer(nextRaw);
+      // Snapshot the playback generation; if stopAudioPlayback runs before the
+      // async decode resolves, the generation changes and we drop the result
+      // instead of pushing a stale buffer that would play on the next turn.
+      const decodeGen = playbackGenRef.current;
       if (nextAb && audioContextRef.current && audioContextRef.current.state !== 'closed') {
         audioContextRef.current.decodeAudioData(nextAb.slice(0))
-          .then((decoded) => { decodedQueueRef.current.push(decoded); })
+          .then((decoded) => {
+            if (decodeGen === playbackGenRef.current) decodedQueueRef.current.push(decoded);
+          })
           .catch(() => {
-            // Decode failed — put the raw item back so the fallback path can try
-            audioQueueRef.current.unshift(nextRaw);
+            // Decode failed — put the raw item back so the fallback path can try,
+            // but only if this turn is still current.
+            if (decodeGen === playbackGenRef.current) audioQueueRef.current.unshift(nextRaw);
           });
       } else if (nextRaw) {
         // Normalisation failed or context gone — put it back

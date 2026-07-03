@@ -21,7 +21,8 @@ const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10, keepAlive
 const TTS_CACHE_MAX    = 400;  // entries
 const TTS_CACHE_MAX_LEN = 300; // chars — skip caching very long unique strings
 
-const SARVAM_TTS_PACE = Math.min(1.5, Math.max(0.5, Number(process.env.SARVAM_TTS_PACE || 0.85)));
+const _rawPace = Number(process.env.SARVAM_TTS_PACE);
+const SARVAM_TTS_PACE = Number.isFinite(_rawPace) ? Math.min(1.5, Math.max(0.5, _rawPace)) : 0.85;
 
 const _ttsCache = new Map();
 let _cacheHits   = 0;
