@@ -48,6 +48,7 @@ const { verifyUserContext, loadVerifiedUserContext } = require('./middleware/ver
 const { getCompanyInfo } = require('./services/knowledgeBase');
 const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./services/templatePlaceholders');
 const { transcribeAudio } = require('./services/sttService');
+const { createSttStream } = require('./services/sttStreamingService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech, prewarmTtsCache, getTtsCacheStats } = require('./services/ttsService');
 const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths, getAgentConfig, evictSessionBuffer, updateLeadStatus } = require('./services/db');
@@ -709,6 +710,80 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   * Shared post-transcript pipeline: validate the transcript (with noise nudge),
+   * emit it, run the LLM stream, and synthesize TTS. Used by BOTH the batch STT
+   * path (process_audio) and the streaming STT path (stt_stream_end) so the two
+   * never drift apart. Emits directly to the socket; returns nothing.
+   */
+  async function runAssistantTurn({ transcript, sessionId, ttsModel, ttsVoice, safeLeadForPrompt, languageMode, agentName, signal, timingMeta, companyInfoPromise, agentConfigPromise }) {
+    if (signal.aborted) return;
+
+    async function noiseNudge(reason) {
+      const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
+      socketNoiseCounts.set(socket.id, noiseCount);
+      if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
+        socketNoiseCounts.set(socket.id, 0);
+        logger.info('stt_noise_nudge', { socketId: socket.id, noiseCount, reason });
+        try {
+          const nudgeAudio = await synthesizeSpeech(
+            STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
+          );
+          if (!signal.aborted) {
+            emitTtsAudioChunk(socket, companyId, sessionId, {
+              audioBuffer: Buffer.from(nudgeAudio, 'base64'),
+              text: STT_NOISE_NUDGE_TEXT,
+            });
+            socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
+          }
+        } catch { socket.emit('no_speech'); }
+      } else {
+        socket.emit('no_speech');
+      }
+    }
+
+    if (!transcript || !transcript.trim()) {
+      logger.warn('stt_no_speech', { companyId, sessionId });
+      await noiseNudge('empty_transcript');
+      return;
+    }
+    transcript = transcript.trim();
+    if (isLowSignalTranscript(transcript)) {
+      logger.info('stt_low_signal', { companyId, sessionId, transcript });
+      await noiseNudge('low_signal');
+      return;
+    }
+    // Valid transcript — reset noise counter
+    socketNoiseCounts.set(socket.id, 0);
+    socket.emit('transcript', { transcript });
+
+    // ── LLM Streaming ──────────────────────────────────────────────────────
+    const llmStartMs = nowMs();
+    const stream = await generateResponseStream(transcript, sessionId, companyId, safeLeadForPrompt, languageMode, agentName, { companyInfoPromise, agentConfigPromise });
+    let firstTokenSeen = false;
+    const instrumentedStream = (async function* wrapStream() {
+      for await (const llmChunk of stream) {
+        if (!firstTokenSeen && (llmChunk?.choices?.[0]?.delta?.content || '').length > 0) {
+          firstTokenSeen = true;
+          timingMeta.llmFirstTokenMs = nowMs() - llmStartMs;
+        }
+        yield llmChunk;
+      }
+    })();
+
+    await streamAssistantResponse({
+      stream: instrumentedStream,
+      signal,
+      socket,
+      companyId,
+      sessionId,
+      ttsModel,
+      ttsVoice,
+      languageMode,
+      timingMeta,
+    });
+  }
+
   socket.on('process_audio', async (data) => {
     if (!socket.user?.companyId) return;
     const { audioBuffer, sessionId, sttModel, ttsModel, ttsVoice, lead, languageMode, agentName, mimeType } = data;
@@ -860,87 +935,21 @@ io.on('connection', (socket) => {
       }
 
       if (signal.aborted) return;
-      if (!transcript || !transcript.trim()) {
-        logger.warn('stt_no_speech', { companyId, sessionId });
-        const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
-        socketNoiseCounts.set(socket.id, noiseCount);
-        if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
-          socketNoiseCounts.set(socket.id, 0);
-          logger.info('stt_noise_nudge', { socketId: socket.id, noiseCount, reason: 'empty_transcript' });
-          try {
-            const nudgeAudio = await synthesizeSpeech(
-              STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
-            );
-            if (!signal.aborted) {
-              emitTtsAudioChunk(socket, companyId, sessionId, {
-                audioBuffer: Buffer.from(nudgeAudio, 'base64'),
-                text: STT_NOISE_NUDGE_TEXT,
-              });
-              socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
-            }
-          } catch { socket.emit('no_speech'); }
-        } else {
-          socket.emit('no_speech');
-        }
-        return;
-      }
-      transcript = transcript.trim();
-      if (isLowSignalTranscript(transcript)) {
-        logger.info('stt_low_signal', { companyId, sessionId, transcript });
-        const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
-        socketNoiseCounts.set(socket.id, noiseCount);
-        if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
-          socketNoiseCounts.set(socket.id, 0);
-          logger.info('stt_noise_nudge', { socketId: socket.id, noiseCount, reason: 'low_signal' });
-          try {
-            const nudgeAudio = await synthesizeSpeech(
-              STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
-            );
-            if (!signal.aborted) {
-              emitTtsAudioChunk(socket, companyId, sessionId, {
-                audioBuffer: Buffer.from(nudgeAudio, 'base64'),
-                text: STT_NOISE_NUDGE_TEXT,
-              });
-              socket.emit('response_complete', { aiText: STT_NOISE_NUDGE_TEXT, shouldEndCall: false });
-            }
-          } catch { socket.emit('no_speech'); }
-        } else {
-          socket.emit('no_speech');
-        }
-        return;
-      }
-      // Valid transcript — reset noise counter
-      socketNoiseCounts.set(socket.id, 0);
       const sttMs = nowMs() - sttStartMs;
-      socket.emit('transcript', { transcript });
 
-      // ── LLM Streaming ──────────────────────────────────────────────────────
-      // Pass the pre-started DB promises — they may already be resolved now
-      // that STT has finished, meaning zero additional wait for those reads.
-      const llmStartMs = nowMs();
-      const stream = await generateResponseStream(transcript, sessionId, companyId, safeLeadForPrompt, languageMode, agentName, { companyInfoPromise, agentConfigPromise });
-      let firstTokenSeen = false;
-      const timingMeta = { requestStartMs, sttMs, llmFirstTokenMs: null };
-      const instrumentedStream = (async function* wrapStream() {
-        for await (const llmChunk of stream) {
-          if (!firstTokenSeen && (llmChunk?.choices?.[0]?.delta?.content || '').length > 0) {
-            firstTokenSeen = true;
-            timingMeta.llmFirstTokenMs = nowMs() - llmStartMs;
-          }
-          yield llmChunk;
-        }
-      })();
-
-      await streamAssistantResponse({
-        stream: instrumentedStream,
-        signal,
-        socket,
-        companyId,
+      // Hand off to the shared transcript → LLM → TTS pipeline.
+      await runAssistantTurn({
+        transcript,
         sessionId,
         ttsModel,
         ttsVoice,
+        safeLeadForPrompt,
         languageMode,
-        timingMeta,
+        agentName,
+        signal,
+        timingMeta: { requestStartMs, sttMs, llmFirstTokenMs: null },
+        companyInfoPromise,
+        agentConfigPromise,
       });
 
     } catch (err) {
@@ -955,6 +964,130 @@ io.on('connection', (socket) => {
       if (activeSessions.get(socket.id) === abortCtrl) {
         activeSessions.delete(socket.id);
       }
+    }
+  });
+
+  // ── Streaming STT (experimental, gated by client `streamingStt` flag) ────────
+  // Latency win: the Sarvam WS receives PCM frames WHILE the user speaks, so the
+  // transcript is (nearly) ready at speech-end instead of starting a ~1.6 s batch
+  // upload then. Falls back to process_audio if the WS can't open.
+  //
+  // Known limitation (v1): user-side call recording is skipped in streaming mode
+  // (agent audio still records). Batch mode records both sides as before.
+
+  socket.on('stt_stream_start', async (data = {}) => {
+    if (!socket.user?.companyId) return;
+    const { sessionId, sttModel, languageMode } = data;
+    if (!sessionId) return;
+    socket.data.recordingSessionId = sessionId;
+
+    // Tear down any previous stream on this socket.
+    if (socket.data.sttStream) {
+      try { socket.data.sttStream.close(); } catch { /* noop */ }
+      socket.data.sttStream = null;
+    }
+
+    try {
+      const stream = createSttStream({
+        languageCode: resolveSttLanguageCode(languageMode),
+        model: sttModel || 'saarika:v2.5',
+        sampleRate: 16000,
+      });
+      socket.data.sttStream = stream;
+      await stream.ready;
+      logger.info('stt_stream_started', { companyId, sessionId, languageMode });
+    } catch (err) {
+      logger.error('stt_stream_start_failed', { err: err.message });
+      socket.data.sttStream = null;
+      // Tell the client to use the batch path for this turn.
+      socket.emit('stt_stream_unavailable');
+    }
+  });
+
+  socket.on('stt_stream_frame', (data = {}) => {
+    if (!socket.user?.companyId) return;
+    const stream = socket.data.sttStream;
+    if (!stream || !data?.audio) return;
+    stream.push(data.audio); // base64-encoded PCM16 mono @ 16 kHz
+  });
+
+  // Client aborted a speech segment (too short / assistant busy) — close the WS
+  // without running a turn so we don't spend an LLM/TTS round-trip on noise.
+  socket.on('stt_stream_cancel', () => {
+    if (socket.data.sttStream) {
+      try { socket.data.sttStream.close(); } catch { /* noop */ }
+      socket.data.sttStream = null;
+    }
+  });
+
+  socket.on('stt_stream_end', async (data = {}) => {
+    if (!socket.user?.companyId) return;
+    const { sessionId, ttsModel, ttsVoice, lead, languageMode, agentName } = data;
+    if (!companyId || !sessionId) return;
+
+    const stream = socket.data.sttStream;
+    if (!stream) { socket.emit('no_speech'); return; }
+
+    // Per-socket rate limiting (shared with batch path).
+    const lastProcessAt = socketLastProcessAt.get(socket.id);
+    if (lastProcessAt != null && Date.now() - lastProcessAt < 800) {
+      try { stream.close(); } catch { /* noop */ }
+      socket.data.sttStream = null;
+      socket.emit('no_speech');
+      return;
+    }
+    socketLastProcessAt.set(socket.id, Date.now());
+
+    const safeLeadForPrompt = sanitizeLeadForPrompt(lead);
+
+    const existingCtrl = activeSessions.get(socket.id);
+    if (existingCtrl) existingCtrl.abort();
+    const abortCtrl = new AbortController();
+    activeSessions.set(socket.id, abortCtrl);
+    const { signal } = abortCtrl;
+
+    // Measure latency from speech-END (comparable to the batch path) so the
+    // streaming win shows up as a much smaller stt_ms (just the flush drain).
+    const requestStartMs = nowMs();
+    const companyInfoPromise = getCompanyInfo(companyId).catch(() => null);
+    const agentConfigPromise = getAgentConfig(companyId).catch(() => null);
+
+    try {
+      const finalizeStart = nowMs();
+      const transcript = await stream.finalize();
+      const sttMs = nowMs() - finalizeStart;
+      try { stream.close(); } catch { /* noop */ }
+      socket.data.sttStream = null;
+
+      if (signal.aborted) return;
+      logger.info('stt_stream_end', { companyId, sessionId, chars: transcript.length, stt_ms: Math.round(sttMs) });
+
+      await runAssistantTurn({
+        transcript,
+        sessionId,
+        ttsModel,
+        ttsVoice,
+        safeLeadForPrompt,
+        languageMode,
+        agentName,
+        signal,
+        timingMeta: { requestStartMs, sttMs, llmFirstTokenMs: null },
+        companyInfoPromise,
+        agentConfigPromise,
+      });
+    } catch (err) {
+      if (err.name === 'AbortError' || signal.aborted) {
+        logger.info('stt_stream_end_aborted', { socketId: socket.id });
+        return;
+      }
+      logger.error('stt_stream_end_error', { err: err.message });
+      emitSocketError(socket, 'SYSTEM', safeClientMessage(err));
+    } finally {
+      if (activeSessions.get(socket.id) === abortCtrl) {
+        activeSessions.delete(socket.id);
+      }
+      try { socket.data.sttStream?.close(); } catch { /* noop */ }
+      socket.data.sttStream = null;
     }
   });
 
@@ -1040,6 +1173,11 @@ io.on('connection', (socket) => {
     activeSessions.delete(socket.id);
     socketNoiseCounts.delete(socket.id);
     socketLastProcessAt.delete(socket.id);
+    // Close any open streaming-STT WebSocket so it doesn't leak.
+    if (socket.data?.sttStream) {
+      try { socket.data.sttStream.close(); } catch { /* noop */ }
+      socket.data.sttStream = null;
+    }
     const recSid = socket.data?.recordingSessionId;
     if (recSid && companyId) {
       // Evict stale session data for abandoned calls (user closed tab without end_call).

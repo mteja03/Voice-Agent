@@ -27,6 +27,7 @@
     "multer": "^2.0.0",
     "openai": "^4.20.1",
     "redis": "^6.1.0",
+    "sarvamai": "^1.1.7",
     "socket.io": "^4.8.3",
     "uuid": "^11.0.0",
     "validator": "^13.15.35"

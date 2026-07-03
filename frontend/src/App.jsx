@@ -67,6 +67,9 @@ const DEFAULT_SETTINGS = {
   ttsVoice: 'shubh',
   languageMode: 'telugu',
   autoEndCall: true,
+  // Experimental: stream PCM to Sarvam over WebSocket during speech so the
+  // transcript is ready at speech-end (saves ~0.8-1.2 s/turn). Off by default.
+  streamingStt: false,
   introTemplate: 'హలో {leadName} గారు, నేను {agentName} నుండి మాట్లాడుతున్నాను. మీకు ఇది మాట్లాడటానికి సరైన సమయమా?',
 };
 

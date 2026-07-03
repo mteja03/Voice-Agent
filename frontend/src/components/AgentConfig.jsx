@@ -957,6 +957,35 @@ export default function AgentConfig({
               </div>
             </section>
 
+            {/* Streaming STT (experimental) */}
+            <section className="surface-card rounded-2xl p-5 animate-slide-up" style={{ animationDelay: '650ms' }}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-white mb-1">
+                    Streaming STT <span className="text-[10px] font-medium uppercase tracking-wide text-amber-500">Experimental</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-gray-500">
+                    Streams your voice to the transcriber while you speak instead of after you finish, cutting ~0.8–1.2s of latency per turn. Falls back automatically if unavailable. Note: caller-side call recording is skipped while this is on.
+                  </p>
+                </div>
+                {/* Toggle switch */}
+                <div className="flex flex-col items-center gap-1.5 pt-1 shrink-0">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!settings.streamingStt}
+                    onClick={() => handleUpdateSetting('streamingStt', !settings.streamingStt)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                      settings.streamingStt ? 'bg-brand-600' : 'bg-slate-300 dark:bg-gray-700'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${settings.streamingStt ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  <span className="text-[11px] text-slate-500 dark:text-gray-500">{settings.streamingStt ? 'On' : 'Off'}</span>
+                </div>
+              </div>
+            </section>
+
             {/* Timezone */}
             <section className="surface-card rounded-2xl p-5 animate-slide-up" style={{ animationDelay: '700ms' }}>
               <div className="flex items-center gap-2 mb-1">

@@ -65,6 +65,8 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
   const assistantBusyRef = useRef(false);
   const autoListenEnabledRef = useRef(false);
   const introPendingRef = useRef(false);
+  const streamingActiveRef = useRef(false);  // currently streaming a speech segment to Sarvam WS
+  const streamFallbackRef = useRef(false);   // server said streaming unavailable → use batch path
   const vadRef = useRef(null);
   const playNextAudioRef = useRef(null);
   const disconnectWarnTimerRef = useRef(null);
@@ -244,6 +246,18 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
+      streamingActiveRef.current = false;
+      setProcessingStage(null);
+      setStatus('idle');
+    };
+
+    // Server couldn't open the Sarvam streaming WS — fall back to the batch path
+    // for the rest of the session so the user still gets responses.
+    const handleStreamUnavailable = () => {
+      streamFallbackRef.current = true;
+      streamingActiveRef.current = false;
+      pendingTurnRef.current = false;
+      assistantBusyRef.current = false;
       setProcessingStage(null);
       setStatus('idle');
     };
@@ -281,6 +295,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     socketRef.current.on('tts_audio_chunk', handleTtsAudioChunk);
     socketRef.current.on('response_complete', handleResponseComplete);
     socketRef.current.on('no_speech', handleNoSpeech);
+    socketRef.current.on('stt_stream_unavailable', handleStreamUnavailable);
     socketRef.current.on('error', handleSocketError);
     socketRef.current.on('session_cleared', handleSessionCleared);
     socketRef.current.on('call_summary', handleCallSummary);
@@ -315,6 +330,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       socketRef.current.off('tts_audio_chunk', handleTtsAudioChunk);
       socketRef.current.off('response_complete', handleResponseComplete);
       socketRef.current.off('no_speech', handleNoSpeech);
+      socketRef.current.off('stt_stream_unavailable', handleStreamUnavailable);
       socketRef.current.off('error', handleSocketError);
       socketRef.current.off('session_cleared', handleSessionCleared);
       socketRef.current.off('call_summary', handleCallSummary);
@@ -446,8 +462,57 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     },
     onSpeechStart: () => {
       setStatus('listening');
+      // Streaming STT: open the Sarvam WS and start forwarding frames now, while
+      // the user is still speaking, so the transcript is ready at speech-end.
+      const useStreaming = latestSettingsRef.current?.streamingStt && !streamFallbackRef.current;
+      if (useStreaming && !assistantBusyRef.current && !isPlayingRef.current && !pendingTurnRef.current) {
+        streamingActiveRef.current = true;
+        socketRef.current?.emit('stt_stream_start', {
+          sessionId,
+          sttModel: latestSettingsRef.current.sttModel,
+          languageMode: latestSettingsRef.current.languageMode,
+        });
+      }
+    },
+    onFrameProcessed: (_probabilities, frame) => {
+      // Forward each frame to the open STT stream (streaming mode only).
+      if (!streamingActiveRef.current || !frame?.length) return;
+      const audio = float32ToPcm16Base64(frame);
+      if (audio) socketRef.current?.emit('stt_stream_frame', { audio });
     },
     onSpeechEnd: (audioData) => {
+      // ── Streaming STT path ───────────────────────────────────────────────
+      if (latestSettingsRef.current?.streamingStt && !streamFallbackRef.current) {
+        const wasStreaming = streamingActiveRef.current;
+        streamingActiveRef.current = false;
+        if (!wasStreaming) { setStatus('idle'); return; } // stream never opened (was busy)
+        const speechMs = (audioData.length / 16000) * 1000;
+        const nowTs = Date.now();
+        // Too short / duplicate / assistant busy → cancel the server WS, no turn.
+        if (speechMs < 550 || pendingTurnRef.current || assistantBusyRef.current ||
+            isPlayingRef.current || nowTs - lastProcessEmitAtRef.current < 900) {
+          socketRef.current?.emit('stt_stream_cancel', { sessionId });
+          setStatus('idle');
+          return;
+        }
+        setStatus('processing');
+        setProcessingStage('transcribing');
+        pendingTurnRef.current = true;
+        assistantBusyRef.current = true;
+        lastProcessEmitAtRef.current = nowTs;
+        socketRef.current?.emit('stt_stream_end', {
+          sessionId,
+          sttModel: latestSettingsRef.current.sttModel,
+          ttsModel: latestSettingsRef.current.ttsModel,
+          ttsVoice: latestSettingsRef.current.ttsVoice,
+          languageMode: latestSettingsRef.current.languageMode,
+          agentName: latestSettingsRef.current.agentName,
+          lead: latestLeadRef.current || null,
+        });
+        return;
+      }
+
+      // ── Batch STT path (default) ─────────────────────────────────────────
       if (assistantBusyRef.current || isPlayingRef.current || audioQueueRef.current.length > 0 || decodedQueueRef.current.length > 0) return;
       const speechDurationMs = (audioData.length / 16000) * 1000;
       if (speechDurationMs < 550) { setStatus('idle'); return; }
@@ -708,6 +773,21 @@ function normalizeToArrayBuffer(raw) {
     return Uint8Array.from(raw.data).buffer;
   }
   return null;
+}
+
+// ── Float32 frame → base64 PCM16 (for streaming STT path) ─────────────────────
+// Sarvam streaming expects raw 16-bit little-endian PCM frames (no WAV header),
+// base64-encoded. Each VAD frame is ~512 samples (32 ms @ 16 kHz).
+function float32ToPcm16Base64(frame) {
+  const pcm16 = new Int16Array(frame.length);
+  for (let i = 0; i < frame.length; i++) {
+    const s = Math.max(-1, Math.min(1, frame[i]));
+    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  const bytes = new Uint8Array(pcm16.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
 }
 
 // ── WAV encoder (for VAD path) ────────────────────────────────────────────────
