@@ -21,6 +21,8 @@ const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10, keepAlive
 const TTS_CACHE_MAX    = 400;  // entries
 const TTS_CACHE_MAX_LEN = 300; // chars — skip caching very long unique strings
 
+const SARVAM_TTS_PACE = Math.min(1.5, Math.max(0.5, Number(process.env.SARVAM_TTS_PACE || 0.85)));
+
 const _ttsCache = new Map();
 let _cacheHits   = 0;
 let _cacheMisses = 0;
@@ -104,7 +106,7 @@ async function _callSarvam(text, speaker, model, languageCode) {
     target_language_code: languageCode || 'te-IN',
     speaker,
     model,
-    pace: 0.85,
+    pace: SARVAM_TTS_PACE,
     speech_sample_rate: 16000,
     enable_preprocessing: false,
     output_audio_codec: 'mp3',

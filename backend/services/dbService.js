@@ -859,6 +859,41 @@ async function deleteQuestionnaire(companyId, questionnaireId) {
 }
 
 /**
+ * Update a lead's status after a call outcome is determined.
+ * Called fire-and-forget from the end_call handler.
+ * @param {string} companyId
+ * @param {string} leadId
+ * @param {string} status - 'hot' | 'not_interested' | 'closed' | 'contacted'
+ */
+async function updateLeadStatus(companyId, leadId, status) {
+  assertCompanyId(companyId);
+  if (!leadId || !status) return;
+  const supabase = getSupabase();
+
+  // Try with updated_at first, fall back without it if column doesn't exist
+  let error;
+  ({ error } = await supabase
+    .from('leads')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', leadId)
+    .eq('company_id', companyId));
+
+  if (error && (error.message?.includes('updated_at') || error.code === '42703')) {
+    ({ error } = await supabase
+      .from('leads')
+      .update({ status })
+      .eq('id', leadId)
+      .eq('company_id', companyId));
+  }
+
+  if (error) {
+    logger.warn('lead_status_update_error', { companyId, leadId, status, error: error.message });
+    throw new Error(error.message);
+  }
+  logger.info('lead_status_updated', { companyId, leadId, status });
+}
+
+/**
  * Evict the in-process message buffer for a specific session.
  * Call this at end_call and disconnect so stale buffers don't linger.
  */
@@ -888,6 +923,7 @@ module.exports = {
   getAgentConfigRow,
   upsertAgentConfig,
   upsertLead,
+  updateLeadStatus,
   listQuestionnaires,
   getQuestionnaire,
   createQuestionnaire,
