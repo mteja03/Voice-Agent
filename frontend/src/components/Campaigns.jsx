@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
 import {
   Upload,
   Trash2,
@@ -321,9 +322,17 @@ export default function Campaigns({
   // ── CSV logic ──────────────────────────────────────────────────────────────
   const processCsvText = (text) => {
     setError('');
-    const parsed = parseCsv(text);
+    let parsed;
+    try {
+      parsed = parseCsv(text);
+    } catch {
+      setError('Could not read that CSV. Check the file and try again.');
+      toast.error('Could not read that CSV file');
+      return;
+    }
     if (!parsed.length) {
       setError('CSV is empty or invalid. Use headers: name, phone, location, budget, source, notes');
+      toast.error('CSV is empty or invalid');
       return;
     }
     const usedExistingIds = new Set();
@@ -399,6 +408,7 @@ export default function Campaigns({
       file.type === 'text/csv' || file.type === 'application/vnd.ms-excel' || file.type === '';
     if (!nameOk && !typeOk) {
       setError('Please drop a .csv file.');
+      toast.error('Please drop a .csv file');
       return;
     }
     const text = await file.text();
@@ -407,9 +417,11 @@ export default function Campaigns({
 
   const confirmImport = () => {
     if (!pendingImport) return;
+    const count = pendingImport.leads.length;
     onLeadsChange(pendingImport.leads);
     if (!activeLead) onActiveLeadChange(pendingImport.leads[0] || null);
     setPendingImport(null);
+    toast.success(`Imported ${count} ${count === 1 ? 'lead' : 'leads'}`);
   };
 
   // ── lead table helpers ─────────────────────────────────────────────────────
@@ -452,6 +464,7 @@ export default function Campaigns({
 
   const applyBulkOutcomeConfirmed = () => {
     const ts = new Date().toISOString();
+    const count = selectedIds.size;
     onLeadsChange(
       leads.map((l) =>
         selectedIds.has(l.id) ? { ...l, lastOutcome: bulkOutcome, lastUpdatedAt: ts } : l
@@ -459,12 +472,15 @@ export default function Campaigns({
     );
     setSelectedIds(new Set());
     setBulkConfirmOpen(false);
+    toast.success(`Updated ${count} ${count === 1 ? 'lead' : 'leads'} to ${bulkOutcome.replace('_', ' ')}`);
   };
 
   const clearAllLeads = () => {
+    const count = leads.length;
     onLeadsChange([]);
     onActiveLeadChange(null);
     setClearConfirmOpen(false);
+    toast.success(`Cleared ${count} ${count === 1 ? 'lead' : 'leads'}`);
   };
 
   const handleStartCall = (lead) => {
@@ -1587,7 +1603,12 @@ export default function Campaigns({
                                     type="button"
                                     onClick={async () => {
                                       const ok = await copyToClipboard(String(selectedCall.summary || ''));
-                                      if (ok) setCopyFeedback(`summary-${selectedCall.id}`);
+                                      if (ok) {
+                                        setCopyFeedback(`summary-${selectedCall.id}`);
+                                        toast.success('Summary copied');
+                                      } else {
+                                        toast.error('Could not copy summary');
+                                      }
                                     }}
                                     className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
                                   >
@@ -1629,7 +1650,12 @@ export default function Campaigns({
                                   .map((m) => `${m.role || 'message'}: ${m.content || ''}`)
                                   .join('\n');
                                 const ok = await copyToClipboard(text);
-                                if (ok) setCopyFeedback(`transcript-${selectedCall.id}`);
+                                if (ok) {
+                                  setCopyFeedback(`transcript-${selectedCall.id}`);
+                                  toast.success('Transcript copied');
+                                } else {
+                                  toast.error('Could not copy transcript');
+                                }
                               }}
                               className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
@@ -1810,6 +1836,7 @@ export default function Campaigns({
                 onClick={() => {
                   onDeleteCampaign(activeCampaignId);
                   setDeleteConfirmOpen(false);
+                  toast.success('Campaign deleted');
                 }}
                 className="px-4 py-2 rounded-xl bg-red-600 text-sm font-semibold text-white hover:bg-red-500 transition-colors min-h-[44px]"
               >

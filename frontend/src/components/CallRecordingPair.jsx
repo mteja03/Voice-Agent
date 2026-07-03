@@ -56,7 +56,7 @@ export default function CallRecordingPair({
       } catch (error) {
         if (cancelled || ctrl.signal.aborted) return;
         setBuildError(
-          'Could not build the mixed review clip. Link may be expired or blocked by browser/network policy. Use the individual download links below or refresh for new signed URLs.'
+          'Could not build the combined review clip. Recording unavailable — please retry, or use the individual download links below.'
         );
       } finally {
         if (!cancelled) setIsBuilding(false);

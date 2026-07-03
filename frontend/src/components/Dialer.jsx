@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { toast } from 'sonner';
 import { Users, ChevronRight, Loader2, WifiOff, ClipboardList, PhoneOff, RefreshCw, Phone } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import ActiveLeadCard from './ActiveLeadCard';
@@ -296,7 +297,9 @@ export default function Dialer({
                     .map(t => [t.transcript && `Lead: ${t.transcript}`, t.aiText && `Agent: ${t.aiText}`]
                       .filter(Boolean).join('\n'))
                     .join('\n\n');
-                  navigator.clipboard.writeText(text).catch(() => {});
+                  navigator.clipboard.writeText(text)
+                    .then(() => toast.success('Transcript copied'))
+                    .catch(() => toast.error('Could not copy transcript'));
                 }}
                 className="text-xs text-slate-500 dark:text-gray-500 hover:text-slate-700 dark:hover:text-gray-300 transition-colors px-2 py-1"
                 title="Copy transcript"

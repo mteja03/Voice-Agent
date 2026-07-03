@@ -154,8 +154,12 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
     } catch (err) {
       console.error('Failed to fetch analytics', err);
       setFetchError(err?.message || 'Failed to load analytics');
-      setAnalytics(null);
-      setRecentCalls([]);
+      // On a refresh, keep any previously loaded data so the dashboard
+      // doesn't blank out just because a background refresh failed.
+      if (setInitialLoading) {
+        setAnalytics(null);
+        setRecentCalls([]);
+      }
     } finally {
       if (setInitialLoading) setLoading(false);
       else setRecordingsLoading(false);
@@ -255,8 +259,8 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1 text-right">
-          {fetchError ? (
-            <span className="text-xs text-red-600 dark:text-red-400">Fetch failed — showing stale data</span>
+          {fetchError && (analytics || recentCalls.length > 0) ? (
+            <span className="text-xs text-amber-600 dark:text-amber-400">Couldn't refresh — showing last loaded data</span>
           ) : updatedLabel ? (
             <span className="text-xs text-slate-500 dark:text-gray-500">{updatedLabel}</span>
           ) : null}
@@ -274,18 +278,22 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
       </header>
 
       {fetchError && (
-        <div role="alert" className="mx-4 mt-4 sm:mx-8 flex items-start gap-3 rounded-xl border border-red-300/60 bg-red-50/95 px-4 py-3 text-sm text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-200">
-          <svg className="mt-0.5 h-4 w-4 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+        <div role="status" className="mx-4 mt-4 sm:mx-8 flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50/95 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200">
+          <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
           <div className="flex-1 min-w-0">
-            <p className="font-medium">Analytics unavailable</p>
-            <p className="mt-0.5 text-xs text-red-700 dark:text-red-300">{fetchError} — check your server connection and try refreshing.</p>
+            <p className="font-medium">Analytics couldn't load right now</p>
+            <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
+              {(analytics || recentCalls.length > 0)
+                ? "We're showing the last data we loaded. Try again in a moment."
+                : "This is usually a temporary connection hiccup. Try again in a moment."}
+            </p>
           </div>
           <button
             type="button"
             onClick={() => loadDashboard(false)}
-            className="shrink-0 rounded-lg border border-red-300 bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-200 dark:border-red-700 dark:bg-red-900/40 dark:text-red-200 dark:hover:bg-red-900/70 transition-colors"
+            className="shrink-0 rounded-lg border border-amber-300 bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-200 dark:hover:bg-amber-900/70 transition-colors"
           >
             Retry
           </button>
@@ -303,7 +311,6 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-blue-500"
               spark={callsSpark}
               sparkStroke={STROKE.blue}
-              delay={0}
             />
             <StatCard
               title="Interested Leads"
@@ -313,7 +320,6 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-emerald-500"
               spark={interestedSpark}
               sparkStroke={STROKE.emerald}
-              delay={100}
             />
             <StatCard
               title="Conversion Rate"
@@ -323,7 +329,6 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-brand-500"
               spark={conversionSpark}
               sparkStroke={STROKE.brand}
-              delay={200}
             />
             <StatCard
               title="Avg Call Duration"
@@ -333,7 +338,6 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-indigo-500"
               spark={durationSpark}
               sparkStroke={STROKE.indigo}
-              delay={300}
             />
             <StatCard
               title="Active Campaign"
@@ -343,12 +347,11 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               color="bg-amber-500"
               spark={campaignSpark}
               sparkStroke={STROKE.amber}
-              delay={400}
             />
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <div className="surface-card flex flex-col p-6 lg:col-span-2 animate-slide-up" style={{ animationDelay: '500ms' }}>
+            <div className="surface-card flex flex-col p-6 lg:col-span-2 animate-slide-up">
               <h2 className="mb-6 text-lg font-semibold text-slate-900 dark:text-white">Call Volume (Last 7 Days)</h2>
               <div className="min-h-[300px] flex-1">
                 {callsByDate.length > 0 ? (
@@ -389,7 +392,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               </div>
             </div>
 
-            <div className="surface-card flex flex-col p-6 animate-slide-up" style={{ animationDelay: '600ms' }}>
+            <div className="surface-card flex flex-col p-6 animate-slide-up">
               <h2 className="mb-6 text-lg font-semibold text-slate-900 dark:text-white">Outcome Distribution</h2>
               <div className="min-h-[300px] flex-1">
                 {outcomes.length > 0 ? (
@@ -437,11 +440,11 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
             </div>
           </div>
 
-          <div className="surface-card p-6 animate-slide-up" style={{ animationDelay: '650ms' }}>
+          <div className="surface-card p-6 animate-slide-up">
             <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Call recordings</h2>
               <p className="text-xs text-slate-500 dark:text-gray-500">
-                Both tracks are grouped per call. Links expire in about an hour; refresh for new signed URLs. If playback shows an error, use Download or confirm the Storage bucket and file paths in Supabase.
+                Both tracks are grouped per call. If a recording won't play, use Download or refresh — playback links are time-limited.
               </p>
             </div>
             <div className="mb-3 rounded-xl border border-slate-200/90 bg-white/80 p-3 dark:border-gray-800 dark:bg-gray-900/50">
@@ -494,7 +497,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
             </div>
             {callsWithRecordings.length === 0 ? (
               <p className="rounded-xl border border-dashed border-slate-200/90 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-600 dark:border-gray-700/80 dark:bg-gray-900/40 dark:text-gray-400">
-                No recordings yet. Finish a call from the Dialer (end session) to save audio here. Ensure the Supabase Storage bucket <code className="rounded bg-slate-200/80 px-1 dark:bg-gray-800">call-recordings</code> exists.
+                No recordings yet. Finish a call from the Dialer (end session) to save audio here.
               </p>
             ) : filteredRecordingCalls.length === 0 ? (
               <p className="rounded-xl border border-dashed border-slate-200/90 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-600 dark:border-gray-700/80 dark:bg-gray-900/40 dark:text-gray-400">
@@ -541,7 +544,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div className="surface-card p-6 animate-slide-up" style={{ animationDelay: '700ms' }}>
+            <div className="surface-card p-6 animate-slide-up">
               <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Active Campaign Progress</h2>
               <div className="space-y-6">
                 <div>
@@ -580,7 +583,7 @@ export default function DashboardHome({ leads, activeCampaignName, onNavigateCam
               )}
             </div>
 
-            <div className="surface-card p-6 animate-slide-up" style={{ animationDelay: '800ms' }}>
+            <div className="surface-card p-6 animate-slide-up">
               <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Recent Activity (Local)</h2>
               <div className="space-y-4">
                 {leads
@@ -649,13 +652,12 @@ function EmptyAnalyticsPanel({ icon: Icon, title, body, primaryLabel, onPrimary,
   );
 }
 
-function StatCard({ title, value, icon: Icon, trend, color, spark, sparkStroke, delay = 0 }) {
+function StatCard({ title, value, icon: Icon, trend, color, spark, sparkStroke }) {
   return (
-    <div 
+    <div
       className="surface-card group relative overflow-hidden p-6 shadow-lg motion-safe:transition-all motion-safe:duration-300 hover:-translate-y-1 hover:shadow-xl dark:hover:shadow-[0_8px_30px_rgb(0,0,0,0.5)] animate-slide-up"
-      style={{ animationDelay: `${delay}ms` }}
     >
-      <div className={`absolute -right-10 -top-10 h-32 w-32 rounded-full ${color}/20 blur-3xl transition-all duration-500 group-hover:scale-150 group-hover:opacity-70 opacity-30`} />
+      <div className={`absolute -right-10 -top-10 h-32 w-32 rounded-full ${color}/20 blur-3xl opacity-30`} />
       <div className="relative z-10 flex items-start justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium text-slate-600 dark:text-gray-400">{title}</p>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { toast } from 'sonner';
 import { login, switchTenant, getAuthUser, clearAuthSession, AUTH_INVALID_EVENT } from './services/auth';
 import { listTenants, createTenant } from './services/tenants';
 import { fetchAgentConfig, saveAgentConfig } from './services/agentConfigApi';
@@ -404,6 +405,7 @@ export default function App() {
             err.message ||
             'Could not sync to the server. This device still has your latest edits in local storage.';
           setSettingsSaveUi({ status: 'error', errorMessage });
+          toast.error('Could not save agent settings to the server. Your latest edits are saved on this device.');
           console.warn('Failed to save agent config:', errorMessage);
         });
     }, 450);
