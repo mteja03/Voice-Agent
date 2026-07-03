@@ -185,7 +185,10 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     };
 
     const handleTranscript = ({ transcript }) => {
-      setTurns(prev => [...prev, { id: turnIdRef.current++, transcript, aiText: '' }]);
+      setTurns(prev => {
+        const updated = [...prev, { id: turnIdRef.current++, transcript, aiText: '' }];
+        return updated.length > 20 ? updated.slice(updated.length - 20) : updated;
+      });
       setStatus('processing');
       setProcessingStage('generating'); // STT done → now generating LLM reply
     };
@@ -203,7 +206,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
         } else {
           newTurns.push({ id: turnIdRef.current++, transcript: '', aiText: text, isIntro: true });
         }
-        return newTurns;
+        return newTurns.length > 20 ? newTurns.slice(newTurns.length - 20) : newTurns;
       });
       if (audioBuffer) {
         audioQueueRef.current.push(audioBuffer);
@@ -215,7 +218,7 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       pendingTurnRef.current = false;
       assistantBusyRef.current = false;
       introPendingRef.current = false;
-      setProcessingStage(null);
+      setProcessingStage('synthesizing'); // LLM done → waiting for first TTS chunk
       // Attach latency to the most recent turn so each bubble can show its response time.
       if (latency) {
         setTurns(prev => {
@@ -286,7 +289,16 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
       setSocketReady(socketRef.current.connected);
     }
 
+    // Resume AudioContext when tab becomes visible again (Chrome suspends it when hidden)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectWarnTimerRef.current) {
         clearTimeout(disconnectWarnTimerRef.current);
         disconnectWarnTimerRef.current = null;
@@ -358,6 +370,24 @@ export function useVoiceAgent(sessionId, settings, activeLead, onCallSummary) {
     const startAt = Math.max(ac.currentTime + 0.005, scheduledEndTimeRef.current);
     source.start(startAt);
     scheduledEndTimeRef.current = startAt + audioBuffer.duration;
+
+    // Look-ahead: pre-decode the next raw chunk while current chunk is playing
+    // so it's in decodedQueueRef and ready with zero gap when onended fires.
+    if (audioQueueRef.current.length > 0 && decodedQueueRef.current.length === 0) {
+      const nextRaw = audioQueueRef.current.shift(); // consume raw entry immediately
+      const nextAb = normalizeToArrayBuffer(nextRaw);
+      if (nextAb && audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.decodeAudioData(nextAb.slice(0))
+          .then((decoded) => { decodedQueueRef.current.push(decoded); })
+          .catch(() => {
+            // Decode failed — put the raw item back so the fallback path can try
+            audioQueueRef.current.unshift(nextRaw);
+          });
+      } else if (nextRaw) {
+        // Normalisation failed or context gone — put it back
+        audioQueueRef.current.unshift(nextRaw);
+      }
+    }
 
     source.onended = () => {
       isPlayingRef.current = false;

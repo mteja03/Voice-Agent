@@ -287,6 +287,24 @@ export default function Dialer({
           className="surface-card motion-safe:animate-slide-up flex min-h-[200px] flex-1 flex-col overflow-hidden shadow-xl"
           style={{ animationDelay: '500ms' }}
         >
+          {turns.length > 0 && (
+            <div className="flex justify-end px-4 pt-3 pb-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const text = turns
+                    .map(t => [t.transcript && `Lead: ${t.transcript}`, t.aiText && `Agent: ${t.aiText}`]
+                      .filter(Boolean).join('\n'))
+                    .join('\n\n');
+                  navigator.clipboard.writeText(text).catch(() => {});
+                }}
+                className="text-xs text-slate-500 dark:text-gray-500 hover:text-slate-700 dark:hover:text-gray-300 transition-colors px-2 py-1"
+                title="Copy transcript"
+              >
+                Copy transcript
+              </button>
+            </div>
+          )}
           <ConversationFeed
             turns={turns}
             isProcessing={status === 'processing'}
