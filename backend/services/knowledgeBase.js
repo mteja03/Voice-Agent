@@ -1,5 +1,10 @@
 const dbService = require('./dbService');
 
+// Cache embeddings for 5 minutes — the same transcript phrasing repeats often
+// (acknowledgements, location questions) and Ada embeddings are deterministic.
+const _embeddingCache = new Map(); // normalizedText → { embedding, expiresAt }
+const EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000;
+
 // Telugu + English triggers for property-related queries
 const TRIGGER_KEYWORDS = [
   // English
@@ -99,22 +104,16 @@ async function getRelevantProjectInfo(companyId, transcript) {
 
   const lower = transcript.toLowerCase().trim();
 
+  // ── Short-circuit: skip RAG entirely for very short acknowledgements ─────────
+  // Phrases like "అవును", "okay", "hmm" never match project data anyway.
+  const wordCount = lower.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 6 || lower.length < 20) return null;
+
   // ── Fast keyword gate: skip all RAG when no property terms detected ─────────
   // This avoids the OpenAI Ada-002 embedding call (~300-500 ms) on every
   // conversational turn like greetings, confirmations, and off-topic replies.
   const hasKeyword = TRIGGER_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
   if (!hasKeyword) return '';
-
-  // ── Short transcript with keywords: skip embedding, use keyword match ────────
-  // Very short utterances (e.g. "plot?") can't produce a useful embedding vector
-  // but the keyword check above already confirmed relevance.
-  if (lower.length < 20) {
-    console.log(`[RAG] Short transcript (${lower.length} chars) — skipping embedding, using keyword fallback`);
-    const fallback = await keywordFallback(companyId, transcript);
-    if (fallback) return fallback;
-    const allProjects = await listProjects(companyId);
-    return formatProjectsForPrompt(allProjects.slice(0, 3));
-  }
 
   async function keywordThenTop3SafetyNet(logVectorEmpty) {
     if (logVectorEmpty) console.log('[RAG] Vector search empty, falling back to keyword matching');
@@ -129,7 +128,19 @@ async function getRelevantProjectInfo(companyId, transcript) {
     const { getEmbedding } = require('./embeddingService');
     const { getSupabase } = require('./supabaseClient');
 
-    const embedding = await getEmbedding(transcript);
+    const cacheKey = transcript.trim().toLowerCase().replace(/\s+/g, ' ');
+    const cached = _embeddingCache.get(cacheKey);
+    let embedding;
+    if (cached && cached.expiresAt > Date.now()) {
+      embedding = cached.embedding;
+    } else {
+      embedding = await getEmbedding(transcript);
+      _embeddingCache.set(cacheKey, { embedding, expiresAt: Date.now() + EMBEDDING_CACHE_TTL_MS });
+      // Prevent unbounded growth — cap at 200 entries (LRU-simple: delete oldest)
+      if (_embeddingCache.size > 200) {
+        _embeddingCache.delete(_embeddingCache.keys().next().value);
+      }
+    }
     const supabase = getSupabase();
 
     const formattedEmbedding = `[${embedding.join(',')}]`;
