@@ -50,10 +50,19 @@ const { renderConversationTemplate, DEFAULT_LEAD_NAME } = require('./services/te
 const { transcribeAudio } = require('./services/sttService');
 const { generateResponseStream, generateCallSummary, clearSession } = require('./services/chatService');
 const { synthesizeSpeech, prewarmTtsCache, getTtsCacheStats } = require('./services/ttsService');
-const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths, getAgentConfig, evictSessionBuffer } = require('./services/db');
+const { saveMessage, logCall, getSessionMessages, updateCallRecordingPaths, getAgentConfig, evictSessionBuffer, updateLeadStatus } = require('./services/db');
 const callRecording = require('./services/callRecording');
 const { safeClientMessage } = require('./utils/sanitize');
 const { logger } = require('./utils/logger');
+
+function sanitizeLeadForPrompt(lead) {
+  if (!lead || typeof lead !== 'object') return lead;
+  const safe = { ...lead };
+  if (safe.name)  safe.name  = String(safe.name).replace(/[\r\n]/g, ' ').slice(0, 100);
+  if (safe.notes) safe.notes = String(safe.notes).replace(/[\r\n]/g, ' ').slice(0, 500);
+  if (safe.phone) safe.phone = String(safe.phone).replace(/[^\d+\-() ]/g, '').slice(0, 20);
+  return safe;
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -220,8 +229,9 @@ io.use(async (socket, next) => {
 const activeSessions = new Map(); // socketId → AbortController
 const sessionStartTimes = new Map(); // sessionId → startTime in ms
 const socketNoiseCounts = new Map(); // socketId → consecutive no-speech count
+const socketLastProcessAt = new Map(); // socketId → timestamp of last process_audio
 // Keep this strict to avoid accidental auto-hangups during normal polite replies.
-const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|goodbye|bye|have a great day|हम फिर बात करेंगे)/i;
+const CLOSING_SIGNAL_REGEX = /(మళ్ళీ మాట్లాడుదాం|వీడ్కోలు|మంచి రోజు గడపండి|ధన్యవాదాలు మాట్లాడినందుకు|goodbye|bye\b|have a great day|talk later|call you later|not interested|हम फिर बात करेंगे|अलविदा|धन्यवाद|फिर बात करते)/i;
 const STT_TIMEOUT_MS = 15000;
 const TTS_TIMEOUT_MS = 20000;
 // Audio payloads below this threshold are almost certainly silence or mic-open
@@ -433,7 +443,7 @@ io.on('connection', (socket) => {
     } catch (ttsErr) {
       const ttsMs = nowMs() - ttsStart;
       if (String(ttsErr?.message || '').includes('timeout')) {
-        console.warn('[TTS] Timeout — emitting text only');
+        logger.warn('tts_timeout', { socketId: socket.id });
         if (!signal.aborted) {
           emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: normalizedText });
         }
@@ -476,8 +486,8 @@ io.on('connection', (socket) => {
      * emit loop can handle errors gracefully without short-circuiting the queue.
      */
     function queueTts(sentence, isFlush = false) {
-      const label = isFlush ? '[TTS Flush]' : '[TTS Chunk]';
-      console.log(`${label} Queuing: "${sentence}"`);
+      const label = isFlush ? 'tts_flush_queued' : 'tts_chunk_queued';
+      logger.info(label, { sentence });
       const ttsStart = nowMs();
       const voice   = ttsVoice  || 'shubh';
       const model   = ttsModel  || 'bulbul:v3';
@@ -492,7 +502,7 @@ io.on('connection', (socket) => {
 
     for await (const chunk of stream) {
       if (signal.aborted) {
-        console.log(`[Barge-in] Stream cancelled mid-generation for ${socket.id}`);
+        logger.info('barge_in_stream_cancelled', { socketId: socket.id });
         break;
       }
 
@@ -517,7 +527,7 @@ io.on('connection', (socket) => {
       if (shouldFlushTtsRemainder(sentence)) {
         ttsPipeline.push(queueTts(sentence, true));
       } else if (sentence) {
-        console.log(`[TTS Flush] Dropping short incomplete tail (${sentence.length} chars): "${sentence}"`);
+        logger.info('tts_flush_tail_dropped', { chars: sentence.length, sentence });
       }
     }
 
@@ -536,7 +546,7 @@ io.on('connection', (socket) => {
           text: result.sentence,
         });
       } else {
-        console.error('[TTS Error]', result.err?.message);
+        logger.error('tts_chunk_error', { err: result.err?.message });
         // Emit text-only so the client transcript still updates.
         emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: result.sentence });
       }
@@ -564,9 +574,15 @@ io.on('connection', (socket) => {
       if (timingMeta) {
         const totalMs = doneAt - timingMeta.requestStartMs;
         recordTurnLatency(totalMs);
-        console.log(
-          `[Latency] session=${sessionId} stt_ms=${timingMeta.sttMs ?? 'na'} llm_first_token_ms=${timingMeta.llmFirstTokenMs ?? 'na'} tts_chunks=${ttsChunks} tts_total_ms=${ttsTotalMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${totalMs.toFixed(1)}`
-        );
+        logger.info('turn_latency', {
+          sessionId,
+          stt_ms: timingMeta.sttMs ?? null,
+          llm_first_token_ms: timingMeta.llmFirstTokenMs ?? null,
+          tts_chunks: ttsChunks,
+          tts_total_ms: Math.round(ttsTotalMs),
+          ttf_audio_ms: toFirstAudioMs != null ? Math.round(toFirstAudioMs) : null,
+          total_ms: Math.round(totalMs),
+        });
       }
     }
   }
@@ -576,7 +592,7 @@ io.on('connection', (socket) => {
     if (!socket.user?.companyId) return;
     const ctrl = activeSessions.get(socket.id);
     if (ctrl) {
-      console.log(`[Barge-in] Cancelling active stream for ${socket.id}`);
+      logger.info('barge_in', { socketId: socket.id });
       ctrl.abort();
       activeSessions.delete(socket.id);
     }
@@ -587,6 +603,8 @@ io.on('connection', (socket) => {
     const { sessionId, ttsModel, ttsVoice, lead, introTemplate, languageMode, agentName } = data;
     if (!sessionId || !companyId) return;
     socket.data.recordingSessionId = sessionId;
+
+    const safeLeadForPrompt = sanitizeLeadForPrompt(lead);
 
     if (!sessionStartTimes.has(sessionId)) {
       sessionStartTimes.set(sessionId, nowMs());
@@ -611,7 +629,7 @@ io.on('connection', (socket) => {
       ).catch(() => {});
 
       const requestStartMs = nowMs();
-      const fullAssistantMessage = await renderIntroMessage(companyId, lead, introTemplate, agentName);
+      const fullAssistantMessage = await renderIntroMessage(companyId, safeLeadForPrompt, introTemplate, agentName);
 
       if (signal.aborted) return;
 
@@ -636,16 +654,22 @@ io.on('connection', (socket) => {
         });
         const doneAt = nowMs();
         const toFirstAudioMs = ttsResult.emitted ? doneAt - ttsResult.ttsMs - requestStartMs : null;
-        console.log(
-          `[Latency] session=${sessionId} stt_ms=0 llm_first_token_ms=na tts_chunks=${ttsResult.emitted ? 1 : 0} tts_total_ms=${ttsResult.ttsMs.toFixed(1)} ttf_audio_ms=${toFirstAudioMs != null ? toFirstAudioMs.toFixed(1) : 'na'} total_ms=${(doneAt - requestStartMs).toFixed(1)}`
-        );
+        logger.info('turn_latency', {
+          sessionId,
+          stt_ms: 0,
+          llm_first_token_ms: null,
+          tts_chunks: ttsResult.emitted ? 1 : 0,
+          tts_total_ms: Math.round(ttsResult.ttsMs),
+          ttf_audio_ms: toFirstAudioMs != null ? Math.round(toFirstAudioMs) : null,
+          total_ms: Math.round(doneAt - requestStartMs),
+        });
       }
     } catch (err) {
       if (err.name === 'AbortError' || signal.aborted) {
-        console.log(`[Socket] Intro processing aborted for ${socket.id}`);
+        logger.info('start_assistant_aborted', { socketId: socket.id });
         return;
       }
-      console.error('[Socket] Start Assistant Error:', err.message);
+      logger.error('start_assistant_error', { err: err.message });
       emitSocketError(socket, 'SYSTEM', safeClientMessage(err));
     } finally {
       if (activeSessions.get(socket.id) === abortCtrl) {
@@ -659,6 +683,17 @@ io.on('connection', (socket) => {
     const { audioBuffer, sessionId, sttModel, ttsModel, ttsVoice, lead, languageMode, agentName, mimeType } = data;
     if (!companyId || !sessionId) return;
     socket.data.recordingSessionId = sessionId;
+
+    // ── Per-socket rate limiting ───────────────────────────────────────────────
+    const lastProcessAt = socketLastProcessAt.get(socket.id);
+    if (lastProcessAt != null && Date.now() - lastProcessAt < 800) {
+      socket.emit('no_speech');
+      return;
+    }
+    socketLastProcessAt.set(socket.id, Date.now());
+
+    const safeLeadForPrompt = sanitizeLeadForPrompt(lead);
+
     // Resolve MIME type: client sends it for push-to-talk (mp4/webm); default to WAV for VAD path
     const audioMimeType = (typeof mimeType === 'string' && mimeType.trim()) ? mimeType.trim() : 'audio/wav';
 
@@ -702,57 +737,93 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // ── Feature 6: STT with language fallback ──────────────────────────────
-      // Try te-IN first. If transcript is empty or looks like garbled output,
-      // retry with language auto-detection (no language_code).
+      // ── STT with language fallback / parallel retry ────────────────────────
+      // For 'auto' mode: fire te-IN and unknown simultaneously; take longest.
+      // For specific language modes: try primary first, fallback to unknown only
+      // if empty (saves a round-trip when speech is clearly in the target language).
       let transcript = '';
-      try {
-        const sttPromise = transcribeAudio(
-          sttInput,
-          audioMimeType,
-          sttModel || 'saarika:v2.5',
-          resolveSttLanguageCode(languageMode)
-        );
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
-        );
-        transcript = await Promise.race([sttPromise, timeoutPromise]);
-      } catch (sttErr) {
-        if (String(sttErr?.message || '').includes('timeout')) {
-          console.warn('[STT] Timeout — skipping turn');
+      if (languageMode === 'auto') {
+        // Parallel retry — both requests fire at the same time
+        const [teResult, unknownResult] = await Promise.allSettled([
+          Promise.race([
+            transcribeAudio(sttInput, audioMimeType, sttModel || 'saarika:v2.5', 'te-IN'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)),
+          ]),
+          Promise.race([
+            transcribeAudio(sttInput, audioMimeType, sttModel || 'saarika:v2.5', 'unknown'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)),
+          ]),
+        ]);
+
+        const teTranscript   = teResult.status      === 'fulfilled' ? (teResult.value      || '') : '';
+        const unknownTranscript = unknownResult.status === 'fulfilled' ? (unknownResult.value || '') : '';
+
+        // Check for timeout on both paths
+        const teTimeout      = teResult.status      === 'rejected' && String(teResult.reason?.message      || '').includes('timeout');
+        const unknownTimeout = unknownResult.status === 'rejected' && String(unknownResult.reason?.message || '').includes('timeout');
+        if (teTimeout && unknownTimeout) {
+          logger.warn('stt_timeout', { companyId, sessionId, mode: 'auto' });
           emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
           return;
         }
-        if (isEmptySttError(sttErr)) {
-          console.log('[STT] Empty transcript on primary attempt');
-          transcript = '';
-        } else {
-          throw sttErr;
-        }
-      }
 
-      // Retry with unknown only when primary transcript is empty.
-      // Non-empty primary transcripts (including English words like "Kakinada")
-      // are good enough and skipping fallback saves one network round-trip.
-      if (transcript.length === 0) {
-        console.log('[STT Fallback] Retrying with unknown lang (empty transcript)');
+        // Take whichever non-empty result is longer
+        if (unknownTranscript.length > teTranscript.length) {
+          transcript = unknownTranscript;
+        } else {
+          transcript = teTranscript;
+        }
+        logger.info('stt_parallel_result', { companyId, sessionId, teLen: teTranscript.length, unknownLen: unknownTranscript.length });
+      } else {
+        // Sequential fallback for specific language modes
         try {
-          const sttPromise = transcribeAudio(sttInput, audioMimeType, sttModel || 'saarika:v2.5', 'unknown');
+          const sttPromise = transcribeAudio(
+            sttInput,
+            audioMimeType,
+            sttModel || 'saarika:v2.5',
+            resolveSttLanguageCode(languageMode)
+          );
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
           );
-          const fallbackTranscript = await Promise.race([sttPromise, timeoutPromise]);
-          if (fallbackTranscript.length >= transcript.length) {
-            transcript = fallbackTranscript;
-          }
-        } catch (fallbackErr) {
-          if (String(fallbackErr?.message || '').includes('timeout')) {
-            console.warn('[STT] Timeout — skipping turn (fallback)');
+          transcript = await Promise.race([sttPromise, timeoutPromise]);
+        } catch (sttErr) {
+          if (String(sttErr?.message || '').includes('timeout')) {
+            logger.warn('stt_timeout', { companyId, sessionId, mode: languageMode });
             emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
             return;
           }
-          if (!isEmptySttError(fallbackErr)) {
-            console.warn('[STT Fallback] Failed, using original transcript:', fallbackErr.message);
+          if (isEmptySttError(sttErr)) {
+            logger.info('stt_empty_primary', { companyId, sessionId });
+            transcript = '';
+          } else {
+            throw sttErr;
+          }
+        }
+
+        // Retry with unknown only when primary transcript is empty.
+        // Non-empty primary transcripts (including English words like "Kakinada")
+        // are good enough and skipping fallback saves one network round-trip.
+        if (transcript.length === 0) {
+          logger.info('stt_fallback_unknown', { companyId, sessionId });
+          try {
+            const sttPromise = transcribeAudio(sttInput, audioMimeType, sttModel || 'saarika:v2.5', 'unknown');
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('STT timeout after 15s')), STT_TIMEOUT_MS)
+            );
+            const fallbackTranscript = await Promise.race([sttPromise, timeoutPromise]);
+            if (fallbackTranscript.length >= transcript.length) {
+              transcript = fallbackTranscript;
+            }
+          } catch (fallbackErr) {
+            if (String(fallbackErr?.message || '').includes('timeout')) {
+              logger.warn('stt_timeout_fallback', { companyId, sessionId });
+              emitSocketError(socket, 'SYSTEM', 'క్షమించండి, మళ్లీ చెబుతారా?');
+              return;
+            }
+            if (!isEmptySttError(fallbackErr)) {
+              logger.warn('stt_fallback_failed', { companyId, sessionId, err: fallbackErr.message });
+            }
           }
         }
       }
@@ -764,7 +835,7 @@ io.on('connection', (socket) => {
         socketNoiseCounts.set(socket.id, noiseCount);
         if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
           socketNoiseCounts.set(socket.id, 0);
-          console.log(`[STT Noise] ${noiseCount} consecutive empty turns — emitting nudge`);
+          logger.info('stt_noise_nudge', { socketId: socket.id, noiseCount, reason: 'empty_transcript' });
           try {
             const nudgeAudio = await synthesizeSpeech(
               STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
@@ -784,12 +855,12 @@ io.on('connection', (socket) => {
       }
       transcript = transcript.trim();
       if (isLowSignalTranscript(transcript)) {
-        console.log(`[STT] Low-signal transcript ignored: "${transcript}"`);
+        logger.info('stt_low_signal', { companyId, sessionId, transcript });
         const noiseCount = (socketNoiseCounts.get(socket.id) || 0) + 1;
         socketNoiseCounts.set(socket.id, noiseCount);
         if (noiseCount >= STT_NOISE_NUDGE_THRESHOLD) {
           socketNoiseCounts.set(socket.id, 0);
-          console.log(`[STT Noise] ${noiseCount} low-signal turns — emitting nudge`);
+          logger.info('stt_noise_nudge', { socketId: socket.id, noiseCount, reason: 'low_signal' });
           try {
             const nudgeAudio = await synthesizeSpeech(
               STT_NOISE_NUDGE_TEXT, ttsVoice || 'shubh', ttsModel || 'bulbul:v3', 'te-IN'
@@ -816,7 +887,7 @@ io.on('connection', (socket) => {
       // Pass the pre-started DB promises — they may already be resolved now
       // that STT has finished, meaning zero additional wait for those reads.
       const llmStartMs = nowMs();
-      const stream = await generateResponseStream(transcript, sessionId, companyId, lead, languageMode, agentName, { companyInfoPromise, agentConfigPromise });
+      const stream = await generateResponseStream(transcript, sessionId, companyId, safeLeadForPrompt, languageMode, agentName, { companyInfoPromise, agentConfigPromise });
       let firstTokenSeen = false;
       const timingMeta = { requestStartMs, sttMs, llmFirstTokenMs: null };
       const instrumentedStream = (async function* wrapStream() {
@@ -843,10 +914,10 @@ io.on('connection', (socket) => {
 
     } catch (err) {
       if (err.name === 'AbortError' || signal.aborted) {
-        console.log(`[Socket] Processing aborted for ${socket.id}`);
+        logger.info('process_audio_aborted', { socketId: socket.id });
         return;
       }
-      console.error('[Socket] Process Audio Error:', err.message);
+      logger.error('process_audio_error', { err: err.message });
       emitSocketError(socket, 'SYSTEM', safeClientMessage(err));
     } finally {
       // Clean up only if this is still the active controller
@@ -878,32 +949,53 @@ io.on('connection', (socket) => {
       activeSessions.delete(socket.id);
     }
 
-    try {
-      const summary = await generateCallSummary(companyId, sessionId, lead);
-      
-      const durationMs = sessionStartTimes.has(sessionId) ? callEndMs - sessionStartTimes.get(sessionId) : 0;
-      const durationSeconds = Math.round(durationMs / 1000);
-      
-      const transcript = await getSessionMessages(companyId, sessionId);
-      const callId = await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
-      if (callId) {
-        const rec = await callRecording.finalizeUpload(companyId, sessionId, callId);
-        if (rec && (rec.recordingUserPath || rec.recordingAgentPath)) {
-          await updateCallRecordingPaths(companyId, callId, rec);
-        }
-      }
-      sessionStartTimes.delete(sessionId);
-      // Evict the in-process message buffer — call is done, no more turns expected.
-      evictSessionBuffer(companyId, sessionId);
-      logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
+    // Emit pending immediately so client can show "Generating summary…"
+    socket.emit('call_summary_pending');
 
-      socket.emit('call_summary', { summary });
-    } catch (err) {
-      console.error('[Socket] End Call Summary Error:', err.message);
-      emitSocketError(socket, 'SYSTEM', 'Failed to generate call summary');
-    } finally {
-      socket.data.endingCall = false;
-    }
+    const durationMs = sessionStartTimes.has(sessionId) ? callEndMs - sessionStartTimes.get(sessionId) : 0;
+    const durationSeconds = Math.round(durationMs / 1000);
+    sessionStartTimes.delete(sessionId);
+    // Evict the in-process message buffer — call is done, no more turns expected.
+    evictSessionBuffer(companyId, sessionId);
+
+    // Run the heavy work asynchronously so the client doesn't wait at hang-up.
+    setImmediate(async () => {
+      try {
+        const summary = await generateCallSummary(companyId, sessionId, lead);
+
+        const transcript = await getSessionMessages(companyId, sessionId);
+        const callId = await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
+        if (callId) {
+          const rec = await callRecording.finalizeUpload(companyId, sessionId, callId);
+          if (rec && (rec.recordingUserPath || rec.recordingAgentPath)) {
+            await updateCallRecordingPaths(companyId, callId, rec);
+          }
+
+          // Update lead status based on call outcome
+          if (lead?.id && summary?.outcome) {
+            const newStatus =
+              summary.outcome === 'interested'     ? 'hot' :
+              summary.outcome === 'not_interested' ? 'not_interested' :
+              summary.outcome === 'closed'         ? 'closed' : null;
+            if (newStatus) {
+              updateLeadStatus(companyId, lead.id, newStatus).catch((err) =>
+                logger.warn('lead_status_update_failed', { leadId: lead.id, err: err.message })
+              );
+            }
+          }
+        }
+        logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
+        socket.emit('call_summary', { summary });
+      } catch (err) {
+        logger.error('end_call_summary_error', { err: err.message });
+        // Emit a fallback summary so the client doesn't hang
+        socket.emit('call_summary', {
+          summary: { outcome: 'unknown', summaryNote: 'Summary generation failed.' },
+        });
+      } finally {
+        socket.data.endingCall = false;
+      }
+    });
   });
 
   socket.on('disconnect', (reason) => {
@@ -912,6 +1004,7 @@ io.on('connection', (socket) => {
     if (ctrl) ctrl.abort();
     activeSessions.delete(socket.id);
     socketNoiseCounts.delete(socket.id);
+    socketLastProcessAt.delete(socket.id);
     const recSid = socket.data?.recordingSessionId;
     if (recSid && companyId) {
       // Evict stale session data for abandoned calls (user closed tab without end_call).
