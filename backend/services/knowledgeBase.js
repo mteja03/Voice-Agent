@@ -104,14 +104,14 @@ async function getRelevantProjectInfo(companyId, transcript) {
 
   const lower = transcript.toLowerCase().trim();
 
-  // ── Fast keyword gate: skip all RAG when no property terms detected ─────────
-  // This avoids the OpenAI Ada-002 embedding call (~300-500 ms) on every
-  // conversational turn like greetings, confirmations, and off-topic replies.
-  // Acknowledgements like "అవును", "okay", "hmm" carry no property keyword and
-  // exit here cheaply. A SHORT query WITH a keyword (e.g. "plots in Kakinada?")
-  // must still reach RAG, so we deliberately do NOT gate on word count.
-  const hasKeyword = TRIGGER_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
-  if (!hasKeyword) return '';
+  // ── Cheap early-return for very short acknowledgements ──────────────────────
+  // Utterances like "అవును", "okay", "hmm", "సరే" carry no discovery intent and
+  // would only pollute the prompt with irrelevant projects. Anything with ≥ 4
+  // words is allowed to reach the vector search so discovery turns like
+  // "3 bedrooms near Hyderabad" get project context even without a whitelisted
+  // keyword. The embedding cache below prevents repeated-phrase cost blowup.
+  const wordCount = lower.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 4) return '';
 
   async function keywordThenTop3SafetyNet(logVectorEmpty) {
     if (logVectorEmpty) console.log('[RAG] Vector search empty, falling back to keyword matching');
@@ -146,7 +146,7 @@ async function getRelevantProjectInfo(companyId, transcript) {
     const { data: vectorResults, error } = await supabase.rpc('match_projects', {
       query_embedding: formattedEmbedding,
       match_company_id: companyId,
-      match_threshold: 0.15,
+      match_threshold: 0.4,
       match_count: 3,
     });
 

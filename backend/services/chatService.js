@@ -241,7 +241,7 @@ async function createResponseStream(inputText, sessionId, companyId, leadContext
       // Use the same already-fetched messages — last 10 as conversation context.
       ...recentMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
     ],
-    max_tokens: Number(process.env.OPENAI_MAX_TOKENS || 100),
+    max_tokens: Number(process.env.OPENAI_MAX_TOKENS || 160),
     temperature: 0.2,
     stream: true,
   });

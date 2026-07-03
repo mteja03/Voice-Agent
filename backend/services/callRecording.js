@@ -3,8 +3,15 @@ const { logger } = require('../utils/logger');
 
 const BUCKET = process.env.CALL_RECORDINGS_BUCKET || 'call-recordings';
 
-/** @type {Map<string, { userSegments: { mime: string, data: Buffer }[], agentMp3: Buffer[] }>} */
+/** @type {Map<string, { userSegments: { mime: string, data: Buffer }[], agentMp3: Buffer[], totalBytes: number, capped: boolean, lastTouchedAt: number }>} */
 const sessions = new Map();
+
+// ── Memory-safety limits ─────────────────────────────────────────────────────
+// Cap per-session buffered audio to avoid OOM on very long / runaway calls, and
+// sweep abandoned sessions (client closed tab without end_call) so they don't leak.
+const SESSION_MAX_BYTES = 50 * 1024 * 1024; // 50 MB per session
+const SESSION_TTL_MS = 30 * 60 * 1000;      // discard sessions idle > 30 min
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;    // sweep every 5 min
 
 function sessionKey(companyId, sessionId) {
   return `${companyId}:${sessionId}`;
@@ -13,10 +20,23 @@ function sessionKey(companyId, sessionId) {
 function ensureSession(companyId, sessionId) {
   const k = sessionKey(companyId, sessionId);
   if (!sessions.has(k)) {
-    sessions.set(k, { userSegments: [], agentMp3: [] });
+    sessions.set(k, { userSegments: [], agentMp3: [], totalBytes: 0, capped: false, lastTouchedAt: Date.now() });
   }
   return sessions.get(k);
 }
+
+// Periodically discard sessions that haven't been touched recently. Unref so the
+// interval never keeps the process alive on its own.
+const _sweeper = setInterval(() => {
+  const cutoff = Date.now() - SESSION_TTL_MS;
+  for (const [k, s] of sessions) {
+    if ((s.lastTouchedAt || 0) < cutoff) {
+      sessions.delete(k);
+      logger.warn('call_recording_session_swept', { key: k, idleMs: Date.now() - (s.lastTouchedAt || 0) });
+    }
+  }
+}, SWEEP_INTERVAL_MS);
+if (typeof _sweeper.unref === 'function') _sweeper.unref();
 
 /**
  * Normalize binary payloads from Socket.IO (Buffer, ArrayBuffer, typed array, serialized Buffer).
@@ -36,16 +56,41 @@ function normalizeSocketAudioBuffer(audioBuffer) {
   return null;
 }
 
+/**
+ * Enforce the per-session byte cap. Returns true if there is room to append
+ * `incoming` more bytes, false if the session is (or just became) capped.
+ */
+function withinCap(companyId, sessionId, s, incoming) {
+  if (s.capped) return false;
+  if (s.totalBytes + incoming > SESSION_MAX_BYTES) {
+    s.capped = true;
+    logger.warn('call_recording_session_capped', {
+      companyId,
+      sessionId,
+      totalBytes: s.totalBytes,
+      maxBytes: SESSION_MAX_BYTES,
+    });
+    return false;
+  }
+  return true;
+}
+
 function appendUser(companyId, sessionId, buffer, mimeType = 'audio/wav') {
   if (!buffer || !buffer.length) return;
   const s = ensureSession(companyId, sessionId);
+  s.lastTouchedAt = Date.now();
+  if (!withinCap(companyId, sessionId, s, buffer.length)) return;
   s.userSegments.push({ mime: mimeType || 'audio/wav', data: Buffer.from(buffer) });
+  s.totalBytes += buffer.length;
 }
 
 function appendAgent(companyId, sessionId, mp3Buffer) {
   if (!mp3Buffer || !mp3Buffer.length) return;
   const s = ensureSession(companyId, sessionId);
+  s.lastTouchedAt = Date.now();
+  if (!withinCap(companyId, sessionId, s, mp3Buffer.length)) return;
   s.agentMp3.push(Buffer.from(mp3Buffer));
+  s.totalBytes += mp3Buffer.length;
 }
 
 function discard(companyId, sessionId) {

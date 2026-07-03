@@ -56,6 +56,18 @@ const callRecording = require('./services/callRecording');
 const { safeClientMessage } = require('./utils/sanitize');
 const { logger } = require('./utils/logger');
 
+// ── Top-level crash guards ───────────────────────────────────────────────────
+// The codebase has many fire-and-forget .catch() handlers (prewarmTtsCache,
+// updateLeadStatus, embedProjectInBackground). A single stray unhandled
+// rejection would otherwise crash the whole process and drop every live call.
+// Log and keep the process alive instead.
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandled_rejection', { reason: reason instanceof Error ? reason.message : String(reason) });
+});
+process.on('uncaughtException', (err) => {
+  logger.error('uncaught_exception', { err: err.message, stack: err.stack });
+});
+
 function sanitizeLeadForPrompt(lead) {
   if (!lead || typeof lead !== 'object') return lead;
   const safe = { ...lead };
@@ -573,12 +585,16 @@ io.on('connection', (socket) => {
       if (signal.aborted) break;
 
       if (result.ok) {
+        // Re-check right before emit: a barge-in may have landed while this
+        // promise was resolving, and stale audio must not reach the client.
+        if (signal.aborted) break;
         emitTtsAudioChunk(socket, companyId, sessionId, {
           audioBuffer: Buffer.from(result.audio64, 'base64'),
           text: result.sentence,
         });
       } else {
         logger.error('tts_chunk_error', { err: result.err?.message });
+        if (signal.aborted) break;
         // Emit text-only so the client transcript still updates.
         emitTtsAudioChunk(socket, companyId, sessionId, { audioBuffer: null, text: result.sentence });
       }
@@ -1104,6 +1120,14 @@ io.on('connection', (socket) => {
     const { sessionId, lead } = data;
     if (!sessionId || !companyId) return;
 
+    // ── Idempotency guard ──────────────────────────────────────────────────
+    // A double-emit (e.g. client retries hang-up) would otherwise run the whole
+    // pipeline twice and insert duplicate call rows. Track per-session state and
+    // bail out if this session is already done or in progress.
+    socket.data.endCallState = socket.data.endCallState || {};
+    if (socket.data.endCallState[sessionId]) return; // done or in-progress
+    socket.data.endCallState[sessionId] = 'in_progress';
+
     socket.data.endingCall = true;
     const callEndMs = nowMs();
 
@@ -1123,35 +1147,46 @@ io.on('connection', (socket) => {
     evictSessionBuffer(companyId, sessionId);
 
     // Run the heavy work asynchronously so the client doesn't wait at hang-up.
+    // Bounded by a 60 s timeout so a hung summary/upload can never leave
+    // endingCall stuck (which would block disconnect cleanup indefinitely).
+    const END_CALL_TIMEOUT_MS = 60000;
     setImmediate(async () => {
       try {
-        const summary = await generateCallSummary(companyId, sessionId, lead);
+        const heavyWork = (async () => {
+          const summary = await generateCallSummary(companyId, sessionId, lead);
 
-        const transcript = await getSessionMessages(companyId, sessionId);
-        const callId = await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
-        if (callId) {
-          const rec = await callRecording.finalizeUpload(companyId, sessionId, callId);
-          if (rec && (rec.recordingUserPath || rec.recordingAgentPath)) {
-            await updateCallRecordingPaths(companyId, callId, rec);
-          }
+          const transcript = await getSessionMessages(companyId, sessionId);
+          const callId = await logCall(companyId, sessionId, lead, durationSeconds, summary.outcome, transcript, summary.summaryNote);
+          if (callId) {
+            const rec = await callRecording.finalizeUpload(companyId, sessionId, callId);
+            if (rec && (rec.recordingUserPath || rec.recordingAgentPath)) {
+              await updateCallRecordingPaths(companyId, callId, rec);
+            }
 
-          // Update lead status based on call outcome
-          if (lead?.id && summary?.outcome) {
-            const newStatus =
-              summary.outcome === 'interested'     ? 'hot' :
-              summary.outcome === 'not_interested' ? 'not_interested' :
-              summary.outcome === 'closed'         ? 'closed' : null;
-            if (newStatus) {
-              updateLeadStatus(companyId, lead.id, newStatus).catch((err) =>
-                logger.warn('lead_status_update_failed', { leadId: lead.id, err: err.message })
-              );
+            // Update lead status based on call outcome
+            if (lead?.id && summary?.outcome) {
+              const newStatus =
+                summary.outcome === 'interested'     ? 'hot' :
+                summary.outcome === 'not_interested' ? 'not_interested' :
+                summary.outcome === 'closed'         ? 'closed' : null;
+              if (newStatus) {
+                updateLeadStatus(companyId, lead.id, newStatus).catch((err) =>
+                  logger.warn('lead_status_update_failed', { leadId: lead.id, err: err.message })
+                );
+              }
             }
           }
-        }
-        logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
-        // Client may have disconnected during summary generation — the summary
-        // is already persisted via logCall above, so a missed emit is harmless.
-        if (socket.connected) socket.emit('call_summary', { summary });
+          logger.info('call_ended', { companyId, sessionId, durationSeconds, outcome: summary.outcome, leadPhone: lead?.phone || null });
+          // Client may have disconnected during summary generation — the summary
+          // is already persisted via logCall above, so a missed emit is harmless.
+          if (socket.connected) socket.emit('call_summary', { summary });
+        })();
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('end_call work timeout after 60s')), END_CALL_TIMEOUT_MS)
+        );
+
+        await Promise.race([heavyWork, timeoutPromise]);
       } catch (err) {
         logger.error('end_call_summary_error', { err: err.message });
         // Emit a fallback summary so the client doesn't hang (only if still connected)
@@ -1161,7 +1196,11 @@ io.on('connection', (socket) => {
           });
         }
       } finally {
+        // Always reset the ending flag and clean the session up, even on timeout,
+        // so a hung heavy-work path can't block disconnect cleanup.
         socket.data.endingCall = false;
+        socket.data.endCallState[sessionId] = 'done';
+        try { callRecording.discard(companyId, sessionId); } catch { /* noop */ }
       }
     });
   });
