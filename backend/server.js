@@ -133,6 +133,8 @@ app.get('/health', (req, res) => {
     latencyMs: getLatencyStats(),
     // LRU TTS audio cache stats — repeated phrases served in ~0 ms vs 3-4 s Sarvam call.
     ttsCache: getTtsCacheStats(),
+    // Horizontal-scale readiness: true when the Socket.IO Redis adapter is active.
+    redisAdapter: Boolean(process.env.REDIS_URL),
   });
 });
 
@@ -193,6 +195,35 @@ const io = new Server(server, {
   pingTimeout: 60000,
   connectTimeout: 45000,
 });
+
+// ── Optional Redis adapter for horizontal scaling ────────────────────────────
+// When REDIS_URL is set, Socket.IO uses the Redis adapter so multiple replicas
+// share broadcast/room state and reconnections routed to a different replica
+// still work. Per-socket state (AbortControllers for barge-in, recording
+// buffers) still lives in-process, so a sticky-session / socket-affinity load
+// balancer is REQUIRED alongside this for correct multi-replica behaviour.
+//
+// Without REDIS_URL the default in-memory adapter is used — identical to the
+// previous single-replica behaviour. Wiring is fully self-healing: if Redis is
+// unreachable the server keeps running on the in-memory adapter.
+if (process.env.REDIS_URL) {
+  (async () => {
+    try {
+      const { createAdapter } = require('@socket.io/redis-adapter');
+      const { createClient } = require('redis');
+      const pubClient = createClient({ url: process.env.REDIS_URL });
+      const subClient = pubClient.duplicate();
+      pubClient.on('error', (e) => logger.error('redis_pub_error', { err: e.message }));
+      subClient.on('error', (e) => logger.error('redis_sub_error', { err: e.message }));
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      io.adapter(createAdapter(pubClient, subClient));
+      logger.info('socketio_redis_adapter_enabled', {});
+    } catch (err) {
+      logger.error('socketio_redis_adapter_failed', { err: err.message });
+      // Fall back to the default in-memory adapter — single-replica still works.
+    }
+  })();
+}
 
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
